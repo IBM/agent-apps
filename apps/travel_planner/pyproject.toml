@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "travel-planner"
+version = "0.1.0"
+description = "Travel Itinerary Planner — CUGAAgent demo app"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "cuga",
+    "fastapi[standard]",
+    "uvicorn[standard]",
+    "httpx",
+    "tavily-python",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+cuga = { path = "../../../../", editable = true }
+
+[tool.setuptools]
+py-modules = ["main"]

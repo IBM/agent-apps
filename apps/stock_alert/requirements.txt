@@ -1,0 +1,13 @@
+# stock_alert — app dependencies
+
+# cuga framework
+cuga
+cuga-skills
+langchain-core
+
+# market data
+requests
+
+# web UI
+fastapi
+uvicorn

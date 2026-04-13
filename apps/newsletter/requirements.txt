@@ -1,0 +1,13 @@
+# newsletter_new — app dependencies
+
+# cuga framework
+cuga
+cuga-skills
+langchain-core
+
+# RSS feed parsing
+feedparser
+
+# web UI
+fastapi
+uvicorn

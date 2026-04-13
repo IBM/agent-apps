@@ -1,0 +1,12 @@
+
+*.pyc
+*.env
+*.DS_Store
+*.store.json
+*processed*
+*.webm
+*.db
+*.bin
+*.cache
+apps/voice_journal/journal/*/
+apps/deck_forge/outputs/*/
