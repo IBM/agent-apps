@@ -15,7 +15,8 @@ npm run dev
 ```
 
 Open **http://localhost:5174**
-![Uploading image.png…]()
+<img width="995" height="636" alt="image" src="https://github.com/user-attachments/assets/764d16fd-c251-4bee-9ddf-28d121cabf93" />
+
 
 ### Build for static hosting
 
