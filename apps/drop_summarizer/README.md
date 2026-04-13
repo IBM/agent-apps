@@ -33,11 +33,9 @@ The agent is given **no tools**. It receives plain text and returns plain text.
 | User asks about a file | Full stored content + question | Answer |
 | User asks generally | Recent summaries as context + question | Answer |
 
-### Skills
+### Agent Instructions
 
-| Skill | Purpose |
-|---|---|
-| `skills/summarizer.md` | Instructs the agent on summary format and length |
+Summarization style and format rules are inlined as `special_instructions` in `make_agent()` inside `main.py`.
 
 ---
 
@@ -102,7 +100,7 @@ Email alert check runs after summarization — pure string matching, no LLM.
 | File | Purpose |
 |---|---|
 | `main.py` | Everything: watcher, extraction, agent, FastAPI UI |
-| `skills/summarizer.md` | Agent skill — summary style and format |
+| `_SYSTEM` in `main.py` | Agent instructions — summary style and format (inlined) |
 | `summaries.db` | SQLite — full content + summaries (created on first run) |
 | `.store.json` | Persisted settings (created on first save) |
 | `requirements.txt` | Python dependencies |

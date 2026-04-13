@@ -11,29 +11,193 @@ Usage:
 
 Supported providers and required env vars:
     openai    OPENAI_API_KEY
-    rits      RITS_API_KEY  (RITS_BASE_URL optional — uses IBM default)
+    rits      RITS_API_KEY
     watsonx   WATSONX_APIKEY + WATSONX_PROJECT_ID (or WATSONX_SPACE_ID)
-    anthropic ANTHROPIC_API_KEY  (needs: pip install langchain-anthropic)
-    litellm   LITELLM_API_KEY + LITELLM_BASE_URL (or OPENAI_BASE_URL)
+    anthropic ANTHROPIC_API_KEY
+    litellm   LITELLM_API_KEY + LITELLM_BASE_URL
     ollama    OLLAMA_BASE_URL (default: http://localhost:11434) — no key needed
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.chat_models import BaseChatModel as _BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs.chat_generation import ChatGeneration
+from langchain_core.outputs.chat_result import ChatResult
+from langchain.tools import BaseTool
+from pydantic import Field, model_validator
 
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# RITS — IBM Research Inference-to-Service
+# ---------------------------------------------------------------------------
+
+class RITSChatModel(_BaseChatModel):
+    """LangChain-compatible chat model for the internal RITS inference service."""
+
+    MODEL_NAME_MAPPING: Dict[str, str] = {
+        "llama-3-3-70b-instruct": "meta-llama/llama-3-3-70b-instruct",
+        "gpt-oss-120b": "openai/gpt-oss-120b",
+        "qwen3-5-397b-a17b-fp8": "qwen/qwen3.5-397B-A17B-FP8",
+        "mistral-large-3-675b-2512-fp4": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+    }
+
+    model_name: str
+    base_url: str
+    api_key: str
+    temperature: float = 0.0
+    bound_tools: Optional[List[Dict[str, Any]]] = Field(default=None)
+
+    @model_validator(mode="after")
+    def _ping_endpoint(self) -> "RITSChatModel":
+        url = f"{self.base_url}/{self.model_name}/ping"
+        headers = {"RITS_API_KEY": self.api_key}
+        try:
+            resp = httpx.get(url, headers=headers, timeout=10.0)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                f"RITS ping failed for '{self.model_name}' (HTTP {e.response.status_code}). "
+                f"Valid models: {list(self.MODEL_NAME_MAPPING.keys())}"
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as e:
+            logger.warning(f"RITS ping failed for '{self.model_name}': {e} — continuing anyway")
+        return self
+
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        msgs = []
+        for m in messages:
+            if isinstance(m, SystemMessage):
+                msgs.append({"role": "system", "content": m.content})
+            elif isinstance(m, HumanMessage):
+                msgs.append({"role": "user", "content": m.content})
+            elif isinstance(m, AIMessage):
+                msg_dict: Dict[str, Any] = {"role": "assistant", "content": m.content}
+                if m.tool_calls:
+                    msg_dict["tool_calls"] = m.additional_kwargs.get("tool_calls")
+                if "reasoning" in m.additional_kwargs:
+                    msg_dict["reasoning"] = m.additional_kwargs["reasoning"]
+                msgs.append(msg_dict)
+            elif isinstance(m, ToolMessage):
+                msgs.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content})
+            else:
+                msgs.append({"role": "user", "content": m.content})
+
+        url = f"{self.base_url}/{self.model_name}/v1/chat/completions"
+        headers = {"RITS_API_KEY": self.api_key}
+        payload_model = self.MODEL_NAME_MAPPING.get(self.model_name, self.model_name)
+
+        payload: Dict[str, Any] = {
+            "model": payload_model,
+            "messages": msgs,
+            "temperature": self.temperature,
+            **kwargs,
+        }
+        if self.bound_tools:
+            payload["tools"] = self.bound_tools
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json=payload, timeout=180.0)
+            if not resp.is_success:
+                logger.error(
+                    "[RITSChatModel] %s %s — response body: %s",
+                    resp.status_code,
+                    url,
+                    resp.text[:2000],
+                )
+            resp.raise_for_status()
+            data = resp.json()
+
+        msg_data = data["choices"][0]["message"]
+        content = msg_data.get("content") or ""
+        additional_kwargs: Dict[str, Any] = {}
+        if "tool_calls" in msg_data:
+            additional_kwargs["tool_calls"] = msg_data["tool_calls"]
+        if msg_data.get("reasoning"):
+            additional_kwargs["reasoning"] = msg_data["reasoning"]
+
+        return ChatResult(generations=[ChatGeneration(
+            message=AIMessage(content=content, additional_kwargs=additional_kwargs)
+        )])
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            raise RuntimeError("Use ainvoke() inside an async context.")
+        except RuntimeError:
+            return asyncio.run(self._agenerate(messages, stop, **kwargs))
+
+    @property
+    def _llm_type(self) -> str:
+        return "rits-openai-compat"
+
+    def bind_tools(
+        self,
+        tools: Sequence[Union[Dict[str, Any], type, Callable, BaseTool]],
+        **kwargs: Any,
+    ) -> "RITSChatModel":
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+
+        tool_defs = []
+        for tool in tools:
+            if hasattr(tool, "name") and hasattr(tool, "args"):
+                tool_defs.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": tool.args,
+                            "required": list(tool.args.keys()),
+                        },
+                    },
+                })
+            elif isinstance(tool, dict):
+                tool_defs.append(tool)
+            else:
+                tool_defs.append(convert_to_openai_tool(tool))
+
+        return self.model_copy(update={"bound_tools": tool_defs, **kwargs})
+
+
+# ---------------------------------------------------------------------------
+# Provider auto-detection
+# ---------------------------------------------------------------------------
 
 def detect_provider() -> str:
     """Pick a provider based on which API key is set in the environment."""
-    if os.getenv("RITS_API_KEY"):       return "rits"
-    if os.getenv("ANTHROPIC_API_KEY"):  return "anthropic"
-    if os.getenv("OPENAI_API_KEY"):     return "openai"
-    if os.getenv("WATSONX_APIKEY"):     return "watsonx"
-    if os.getenv("LITELLM_API_KEY"):    return "litellm"
-    return "ollama"  # local fallback — no key required
+    if os.getenv("RITS_API_KEY"):      return "rits"
+    if os.getenv("ANTHROPIC_API_KEY"): return "anthropic"
+    if os.getenv("OPENAI_API_KEY"):    return "openai"
+    if os.getenv("WATSONX_APIKEY"):    return "watsonx"
+    if os.getenv("LITELLM_API_KEY"):   return "litellm"
+    return "ollama"
 
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
 
 def create_llm(
     provider: Optional[str] = None,
@@ -51,19 +215,21 @@ def create_llm(
     Returns:
         Instantiated BaseChatModel ready to pass to CugaAgent(model=...).
     """
-    p = provider or os.getenv("LLM_PROVIDER") or detect_provider()
+    p = (provider or os.getenv("LLM_PROVIDER") or detect_provider()).lower()
     m = model or os.getenv("LLM_MODEL") or None
 
     if p == "openai":
         from langchain_openai import ChatOpenAI
+        resolved_key = os.getenv("OPENAI_API_KEY")
+        if not resolved_key:
+            raise ValueError("Set OPENAI_API_KEY for the openai provider.")
         return ChatOpenAI(
-            model=m or "gpt-4o",
-            api_key=os.getenv("OPENAI_API_KEY"),
+            model=m or "gpt-4.1",
+            api_key=resolved_key,
             temperature=0,
         )
 
     elif p == "rits":
-        from cuga_runtime.llm import RITSChatModel
         resolved_key = os.getenv("RITS_API_KEY")
         if not resolved_key:
             raise ValueError("Set RITS_API_KEY for the rits provider.")
@@ -80,12 +246,15 @@ def create_llm(
 
     elif p == "watsonx":
         from langchain_ibm import ChatWatsonx
-        model_name = m or "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
+        resolved_key = os.getenv("WATSONX_APIKEY")
+        if not resolved_key:
+            raise ValueError("Set WATSONX_APIKEY for the watsonx provider.")
         project_id = os.getenv("WATSONX_PROJECT_ID") or os.getenv("WATSONX_SPACE_ID")
-        url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+        if not project_id:
+            raise ValueError("Set WATSONX_PROJECT_ID or WATSONX_SPACE_ID.")
         return ChatWatsonx(
-            model_id=model_name,
-            url=url,
+            model_id=m or "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
+            url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
             project_id=project_id,
             params={"temperature": 0, "max_new_tokens": 4096},
         )
@@ -94,13 +263,13 @@ def create_llm(
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError:
-            raise ImportError(
-                "langchain-anthropic is required for the anthropic provider.\n"
-                "Install with: pip install langchain-anthropic"
-            )
+            raise ImportError("pip install langchain-anthropic")
+        resolved_key = os.getenv("ANTHROPIC_API_KEY")
+        if not resolved_key:
+            raise ValueError("Set ANTHROPIC_API_KEY for the anthropic provider.")
         return ChatAnthropic(
             model=m or "claude-sonnet-4-6",
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            api_key=resolved_key,
             temperature=0,
         )
 
@@ -114,14 +283,24 @@ def create_llm(
         )
 
     elif p == "ollama":
-        from langchain_openai import ChatOpenAI
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        return ChatOpenAI(
-            model=m or "llama3.1:8b",
-            base_url=f"{base_url.rstrip('/')}/v1",
-            api_key="ollama",
-            temperature=0,
-        )
+        try:
+            from langchain_ollama import ChatOllama
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            return ChatOllama(
+                model=m or "llama3.1:8b",
+                base_url=base_url,
+                temperature=0,
+                num_ctx=65536,
+            )
+        except ImportError:
+            from langchain_openai import ChatOpenAI
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            return ChatOpenAI(
+                model=m or "llama3.1:8b",
+                base_url=f"{base_url.rstrip('/')}/v1",
+                api_key="ollama",
+                temperature=0,
+            )
 
     else:
         raise ValueError(

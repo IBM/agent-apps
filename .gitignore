@@ -10,3 +10,5 @@
 *.cache
 apps/voice_journal/journal/*/
 apps/deck_forge/outputs/*/
+apps/.*.log
+apps/.launch_pids

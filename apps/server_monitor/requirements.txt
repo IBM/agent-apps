@@ -1,6 +1,5 @@
 # server_monitor — app dependencies
 cuga
-cuga-skills
 langchain-core
 
 # System metrics (cross-platform CPU / RAM / disk / process info)

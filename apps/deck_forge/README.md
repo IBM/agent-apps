@@ -7,11 +7,10 @@ Generate polished presentation decks from a local folder of documents, PDFs, sli
 ## Quick Start
 
 ```bash
-# From repo root (uses the repo .venv)
-python docs/examples/demo_apps/deck_forge/main.py --port 18802
+python main.py --port 18802
 
-# Or via launch.py
-python docs/examples/demo_apps/launch.py start deck_forge
+# Or via launch.py from the apps/ directory
+python ../launch.py start deck_forge
 ```
 
 Open `http://localhost:18802`, enter a folder path and topic, hit **Generate Deck**.
@@ -164,8 +163,6 @@ The `generate()` endpoint already accepts `agent_type: "cuga"`.  To wire it up:
 ## Running the E2E Test
 
 ```bash
-cd docs/examples/demo_apps/deck_forge
-
 # Run all tests (unit + integration)
 python -m pytest tests/test_e2e.py -v
 

@@ -4,7 +4,6 @@ Monitor RSS feeds, ask questions over live articles, and configure keyword
 alerts that email you when matches are found.
 
 ```bash
-cd docs/examples/demo_apps/newsletter_new
 python main.py
 ```
 

@@ -45,18 +45,15 @@ segments, then composes a timestamped answer.
 
 All tools call Python functions directly — no external API calls, no network.
 
-### Skills
+### Agent Instructions
 
-| Skill | Purpose |
-|---|---|
-| `skills/video_qa.md` | When to use each tool, timestamp format, citation rules, "not found" behaviour |
+Tool usage, timestamp format, citation rules, and "not found" behaviour are inlined as `special_instructions` in `_get_agent()` inside `agent.py`.
 
 ---
 
 ## Quick Start
 
 ```bash
-cd docs/examples/demo_apps/video_qa
 pip install -r requirements.txt
 brew install ffmpeg       # for .mp4, .mov, .mkv files
 
@@ -105,6 +102,6 @@ Phase 1 runs once per file. Subsequent runs skip it entirely.
 | `agent.py` | `VideoQAAgent` — wraps CugaAgent with three tools |
 | `transcriber.py` | Whisper pipeline, ffmpeg extraction, segment caching |
 | `index.py` | ChromaDB — embed, store, search, timestamp lookup |
-| `skills/video_qa.md` | Agent instructions: tool usage, timestamp format, citation rules |
+| `_SYSTEM` in `agent.py` | Agent instructions — tool usage, timestamp format, citation rules (inlined) |
 | `requirements.txt` | Python dependencies |
 | `.cache/` | Transcripts + ChromaDB vectors (auto-created, safe to delete to re-transcribe) |

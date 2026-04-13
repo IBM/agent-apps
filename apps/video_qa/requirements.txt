@@ -2,7 +2,6 @@
 
 # cuga framework
 cuga
-cuga-skills
 langchain-core
 
 # transcription — faster-whisper is recommended (~4x faster than openai-whisper)

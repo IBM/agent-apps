@@ -8,7 +8,9 @@ Usage:
     python launch.py stop      # kill all running apps
     python launch.py status    # show which apps are running
     python launch.py logs      # show last 30 lines of each app's log
+    python launch.py install   # pip install requirements.txt for all apps
     python launch.py start newsletter smart_todo   # start specific apps only
+    python launch.py install stock_alert           # install one app only
 
 ENV variables:
     Loaded from .env in the same directory as this script.
@@ -39,27 +41,25 @@ from typing import Optional
 
 HERE = Path(__file__).parent.resolve()
 
-# Use the repo-level venv so editable installs (cuga_skills, cuga_channels, etc.)
-# are on the path for all apps that don't have their own pyproject.toml.
-_REPO_ROOT = HERE.parent.parent.parent  # docs/examples/demo_apps -> repo root
-_VENV_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python3"
+# Use the repo-level venv so editable installs are on the path for all apps
+# that don't have their own pyproject.toml.
+_REPO_ROOT = HERE.parent  # apps/ -> cuga-apps/
+_VENV_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python3.13"
 PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
 
 def _python_cmd(script: str = "main.py"):
-    """Launch using the repo venv Python (has cuga_skills, cuga_channels, etc.)."""
+    """Launch using the repo venv Python."""
     def _cmd(port: int, env: dict) -> list:
         return [PYTHON, script, "--port", str(port)]
     return _cmd
 
 
-def _uv_cmd(script: str = "main.py"):
-    """Launch via `uv run` (for apps with their own pyproject.toml / venv).
-    Port is passed via the PORT env var (injected into the process env by cmd_start).
-    """
+def _port_env_cmd(script: str = "main.py"):
+    """Launch using the repo venv Python; port is passed via PORT env var."""
     def _cmd(port: int, env: dict) -> list:
-        env["PORT"] = str(port)  # travel_planner reads os.environ.get("PORT")
-        return ["uv", "run", "--project", ".", script]
+        env["PORT"] = str(port)
+        return [PYTHON, script]
     return _cmd
 
 
@@ -80,7 +80,7 @@ APPS: list[dict] = [
     dict(name="server_monitor",  dir="server_monitor",  default_port=8767,  cmd=_python_cmd()),
     dict(name="stock_alert",     dir="stock_alert",     default_port=18801, cmd=_python_cmd()),
     dict(name="video_qa",        dir="video_qa",        default_port=8766,  cmd=_video_qa_cmd()),
-    dict(name="travel_planner",  dir="travel_planner",  default_port=8090,  cmd=_uv_cmd()),
+    dict(name="travel_planner",  dir="travel_planner",  default_port=8090,  cmd=_port_env_cmd()),
     dict(name="deck_forge",      dir="deck_forge",      default_port=18802, cmd=_python_cmd()),
     # ── To add a new app, copy one line above and adjust the fields ──────────
 ]
@@ -205,7 +205,28 @@ def _is_running(pid: int) -> bool:
 # Commands
 # ---------------------------------------------------------------------------
 
+def cmd_install(filter_names: Optional[list[str]]):
+    """Run pip install -r requirements.txt for each app that has one."""
+    targets = [a for a in APPS if (not filter_names or a["name"] in filter_names)]
+    for app in targets:
+        req = HERE / app["dir"] / "requirements.txt"
+        if not req.exists():
+            print(f"  [SKIP]  {app['name']:20s}  no requirements.txt")
+            continue
+        print(f"  [INSTALL] {app['name']:20s}  {req}")
+        result = subprocess.run(
+            [PYTHON, "-m", "pip", "install", "-r", str(req)],
+            capture_output=False,
+        )
+        if result.returncode != 0:
+            print(f"  [ERROR] {app['name']:20s}  pip install failed (exit {result.returncode})")
+
+
 def cmd_start(filter_names: Optional[list[str]], env_file: Path):
+    print("--- Installing dependencies ---")
+    cmd_install(filter_names)
+    print("--- Starting apps ---")
+
     dotenv = _load_env(env_file)
     merged_env = {**os.environ, **dotenv}
 
@@ -328,7 +349,7 @@ def main():
     parser.add_argument(
         "action",
         nargs="?",
-        choices=["start", "stop", "status", "logs"],
+        choices=["start", "stop", "status", "logs", "install"],
         default="start",
         help="Action to perform (default: start)",
     )
@@ -358,7 +379,9 @@ def main():
 
     print(f"\n=== CUGAAgent Demo Launcher — {args.action.upper()} ===\n")
 
-    if args.action == "start":
+    if args.action == "install":
+        cmd_install(filter_names)
+    elif args.action == "start":
         cmd_start(filter_names, args.env)
     elif args.action == "stop":
         cmd_stop(filter_names)

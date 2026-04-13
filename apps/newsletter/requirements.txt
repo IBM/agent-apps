@@ -2,7 +2,6 @@
 
 # cuga framework
 cuga
-cuga-skills
 langchain-core
 
 # RSS feed parsing

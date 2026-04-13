@@ -3,7 +3,7 @@
 Monitor crypto and stock prices in a browser UI. Ask market questions on demand,
 or set a threshold alert that emails you when a price is crossed.
 
-**Port:** 18794
+**Port:** 18801
 
 ---
 
@@ -40,21 +40,18 @@ The watch loop message format is: `"Check BTC (crypto) price. Alert threshold: $
 
 Provided by `market.make_market_tools()`.
 
-### Skills
+### Agent Instructions
 
-| Skill | Purpose |
-|---|---|
-| `skills/stock_alert.md` | Tool usage, alert format (`PRICE ALERT` sentinel), query format |
+Tool usage, alert format (`PRICE ALERT` sentinel), and query format are inlined as `special_instructions` in `make_agent()` inside `main.py`.
 
 ---
 
 ## Quick Start
 
 ```bash
-cd docs/examples/demo_apps/stock_alert
 pip install -r requirements.txt
 python main.py
-# open http://127.0.0.1:18794
+# open http://127.0.0.1:18801
 ```
 
 For stock quotes (crypto works without a key):
@@ -108,6 +105,6 @@ App: asyncio.create_task(_watch_loop(agent, symbol, threshold, direction))
 |---|---|
 | `main.py` | Agent, watch loop, email, FastAPI UI |
 | `market.py` | `make_market_tools()` — CoinGecko and Alpha Vantage API calls |
-| `skills/stock_alert.md` | Agent skill — alert format, query format, tool usage |
+| `_SYSTEM` in `main.py` | Agent instructions — alert format, query format, tool usage (inlined) |
 | `requirements.txt` | Python dependencies |
 | `.store.json` | Persisted watches + email config (created on first save) |

@@ -1,0 +1,6 @@
+cuga
+fastapi[standard]
+uvicorn[standard]
+httpx
+tavily-python
+python-dotenv

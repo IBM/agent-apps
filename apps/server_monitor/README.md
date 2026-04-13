@@ -43,18 +43,15 @@ or a direct response. It has read-only tools to drill deeper when needed.
 Tools are **read-only**. The agent is a diagnostician, not an operator — it
 never modifies the system, never kills processes, never restarts services.
 
-### Skills
+### Agent Instructions
 
-| Skill | Purpose |
-|---|---|
-| `skills/server_health.md` | Tool usage order, severity levels, report format, safety constraints |
+Tool usage order, severity levels, report format, and safety constraints are inlined as `special_instructions` in `make_agent()` inside `main.py`.
 
 ---
 
 ## Quick Start
 
 ```bash
-cd docs/examples/demo_apps/server_monitor
 pip install -r requirements.txt
 python main.py
 # open http://127.0.0.1:8767
@@ -112,6 +109,6 @@ precedence after the first save.
 |---|---|
 | `main.py` | Agent, background monitor, FastAPI UI |
 | `metrics.py` | Pure metric functions — psutil + stdlib, no LLM |
-| `skills/server_health.md` | Agent skill — tools, severity levels, report formats, safety rules |
+| `_SYSTEM` in `main.py` | Agent instructions — tools, severity levels, report formats, safety rules (inlined) |
 | `requirements.txt` | Python dependencies |
 | `.store.json` | Persisted thresholds and poll settings |
