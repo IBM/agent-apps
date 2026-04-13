@@ -33,6 +33,11 @@ CUGA can be easily integrated into your Python applications as a library. The SD
 ### Installation
 
 CUGA must be installed before use:
+```bash
+pip install -r requirements.txt"
+```
+
+OR
 
 ```bash
 pip install git+ssh://git@github.com/cuga-project/cuga-agent.git@main
