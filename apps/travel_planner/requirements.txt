@@ -1,4 +1,4 @@
-cuga
+git+ssh://git@github.com/cuga-project/cuga-agent.git@main
 fastapi[standard]
 uvicorn[standard]
 httpx

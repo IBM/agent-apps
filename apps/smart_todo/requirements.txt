@@ -1,3 +1,3 @@
 fastapi
 uvicorn[standard]
-cuga
+git+ssh://git@github.com/cuga-project/cuga-agent.git@main
