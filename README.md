@@ -15,6 +15,8 @@ npm run dev
 ```
 
 Open **http://localhost:5174**
+<img width="995" height="636" alt="image" src="https://github.com/user-attachments/assets/764d16fd-c251-4bee-9ddf-28d121cabf93" />
+
 
 ### Build for static hosting
 
@@ -33,6 +35,11 @@ CUGA can be easily integrated into your Python applications as a library. The SD
 ### Installation
 
 CUGA must be installed before use:
+```bash
+pip install -r requirements.txt"
+```
+
+OR
 
 ```bash
 pip install git+ssh://git@github.com/cuga-project/cuga-agent.git@main
