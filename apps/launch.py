@@ -82,6 +82,7 @@ APPS: list[dict] = [
     dict(name="video_qa",        dir="video_qa",        default_port=8766,  cmd=_video_qa_cmd()),
     dict(name="travel_planner",  dir="travel_planner",  default_port=8090,  cmd=_port_env_cmd()),
     dict(name="deck_forge",      dir="deck_forge",      default_port=18802, cmd=_python_cmd()),
+    dict(name="youtube_research", dir="youtube_research", default_port=18803, cmd=_python_cmd()),
     dict(name="arch_diagram",    dir="arch_diagram",    default_port=18804, cmd=_python_cmd()),
     # ── To add a new app, copy one line above and adjust the fields ──────────
 ]
