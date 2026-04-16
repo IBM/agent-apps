@@ -627,6 +627,68 @@ SSE stream → browser: live progress per tool call`,
     ],
     appUrl: 'http://localhost:18802',
   },
+  {
+    id: 'youtube-research',
+    name: 'YouTube Research',
+    tagline: 'Research any topic via YouTube — find videos, fetch transcripts, synthesise with citations',
+    type: 'video',
+    surface: 'gateway',
+    description:
+      'A browser UI for topic research powered by YouTube content. Topic mode: type a subject and the agent searches the web for relevant YouTube videos, fetches their transcripts, and synthesises findings organised by theme with citations and timestamps. URL mode: paste one or more YouTube links directly for instant summaries with key moments. Research history stored in SQLite.',
+    category: 'content',
+    status: 'working',
+    channels: [],
+    tools: ['web_search()', 'get_video_info()', 'get_transcript()'],
+    demoPath: 'docs/examples/demo_apps/youtube_research',
+    howToRun: {
+      envVars: ['TAVILY_API_KEY'],
+      setup: [
+        'cd docs/examples/demo_apps/youtube_research',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent uses web_search (Tavily) to find YouTube videos, get_video_info (oEmbed) for metadata, get_transcript (youtube-transcript-api) for captions → synthesises across transcripts with citations and timestamps. Research log stored in SQLite.',
+    diagram: `python main.py  →  http://127.0.0.1:18803
+
+Topic mode:
+User: "Latest developments in AI agents"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ web_search("AI agents youtube 2026")
+      ├─ web_search("AI agent frameworks site:youtube.com")
+      │     → 5 YouTube URLs found
+      │
+      ├─ get_video_info(url1..url5) → titles, channels
+      ├─ get_transcript(url1..url4) → timestamped captions
+      │     (url5: no captions — skipped)
+      ▼
+Synthesis by theme with citations:
+"Both Channel A ([12:30]) and Channel B ([08:15]) emphasise…"
+
+URL mode:
+User: "https://youtube.com/watch?v=abc — summarise this"
+      │
+      ▼
+CugaAgent → get_video_info + get_transcript → summary with timestamps`,
+    cugaContribution: [
+      'CugaAgent decides search strategy — generates 2-3 varied queries to surface the best YouTube results',
+      'Agent synthesises across multiple video transcripts by theme, not per-video — cross-referencing what different creators say',
+      'Citation format with channel attribution and timestamps is enforced by the skill prompt',
+      'Transcripts capped at ~5000 words per video to stay within context limits; agent handles truncation gracefully',
+    ],
+    examples: [
+      'Latest developments in AI agents',
+      'How does RLHF work?',
+      'Best practices for RAG pipelines',
+      'https://youtube.com/watch?v=VIDEO_ID — summarise this video',
+      'Compare what these creators say about fine-tuning: [url1] [url2]',
+      'What did they say about scaling laws around the 20-minute mark?',
+    ],
+    appUrl: 'http://localhost:18803',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {
