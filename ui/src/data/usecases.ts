@@ -627,6 +627,72 @@ SSE stream → browser: live progress per tool call`,
     ],
     appUrl: 'http://localhost:18802',
   },
+  {
+    id: 'arch-diagram',
+    name: 'Architecture Diagram Generator',
+    tagline: 'Describe a system in plain English, get a rendered architecture diagram',
+    type: 'images',
+    surface: 'gateway',
+    description:
+      'A browser UI that turns natural-language system descriptions into rendered architecture diagrams. The agent generates Mermaid.js code (flowcharts, sequence diagrams, ER diagrams, state diagrams) and the browser renders it as interactive SVG. Supports iterative refinement — ask the agent to add, remove, or change components and it updates the diagram. Optionally uses web search to research unfamiliar technologies before diagramming. Diagrams downloadable as SVG.',
+    category: 'devtools',
+    status: 'working',
+    channels: [],
+    tools: ['web_search()'],
+    demoPath: 'docs/examples/demo_apps/arch_diagram',
+    howToRun: {
+      envVars: ['TAVILY_API_KEY (optional)'],
+      setup: [
+        'cd docs/examples/demo_apps/arch_diagram',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
+    },
+    architecture:
+      'FastAPI serves the single-page UI with mermaid.js loaded from CDN. POST /ask → CugaAgent generates Mermaid code in a fenced code block → server extracts the code via regex → frontend renders SVG via mermaid.js. The system prompt includes full Mermaid syntax reference with examples for each diagram type to minimise invalid output. Iterative refinement works via the agent thread — the agent remembers the previous diagram and modifies it.',
+    diagram: `python main.py  →  http://127.0.0.1:18804
+
+User: "Design a microservices e-commerce platform"
+      │  POST /ask
+      ▼
+CugaAgent (system prompt includes Mermaid syntax reference)
+      │  (optional) web_search("microservices patterns")
+      ▼
+Response contains:
+  \`\`\`mermaid
+  graph TD
+    Client["Browser"] -->|HTTPS| GW["API Gateway"]
+    GW --> UserSvc["User Service"]
+    GW --> OrderSvc["Order Service"]
+    OrderSvc --> MQ["Message Queue"]
+    MQ --> PaySvc["Payment Service"]
+  \`\`\`
+  + explanation of each component
+      │
+      ▼
+Frontend: mermaid.js renders SVG → Download SVG / Copy code
+
+User: "Add a Redis cache between services and the database"
+      ▼
+CugaAgent → updated diagram with cache node added`,
+    cugaContribution: [
+      'CugaAgent picks the best diagram type (flowchart, sequence, ER, state) based on what the user describes',
+      'System prompt includes full Mermaid syntax reference with correct examples — minimises invalid diagram code',
+      'Iterative refinement via conversation thread — "add a cache", "show as sequence diagram" modifies the existing diagram',
+      'Optional web_search lets the agent research unfamiliar technologies before diagramming',
+    ],
+    examples: [
+      'Microservices e-commerce platform with API gateway, user service, order service, and payment processing',
+      'CI/CD pipeline from git push to production with testing, staging, and rollback',
+      'Real-time chat system with WebSockets, load balancer, and Redis pub/sub',
+      'OAuth2 login flow as a sequence diagram',
+      'E-commerce database schema as an ER diagram',
+      'Order lifecycle as a state diagram',
+      'Add a Redis cache between the services and the database',
+      'Show me the auth flow as a sequence diagram instead',
+    ],
+    appUrl: 'http://localhost:18804',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {
