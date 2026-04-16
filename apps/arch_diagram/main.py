@@ -376,6 +376,7 @@ class CredentialsReq(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _web(port: int) -> None:
+    import re as _re
     import uvicorn
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
@@ -389,29 +390,50 @@ def _web(port: int) -> None:
 
     _agent = make_agent()
 
+    # -- Conversation state --------------------------------------------------
+    _thread_id = uuid.uuid4().hex[:8]
+    _conversation: list[dict] = []   # [{role, text, mermaid?}]
+
     stored_key = _load_store().get("tavily_key", "")
     if stored_key and not os.getenv("TAVILY_API_KEY"):
         os.environ["TAVILY_API_KEY"] = stored_key
 
     @app.post("/ask")
     async def api_ask(req: AskReq):
+        nonlocal _thread_id
         question = req.question.strip()
         if not question:
             return JSONResponse({"error": "Empty question"}, status_code=400)
+
+        _conversation.append({"role": "user", "text": question})
+
         try:
-            result = await _agent.invoke(question, thread_id="diagram")
+            result = await _agent.invoke(question, thread_id=f"diagram-{_thread_id}")
             answer = result.answer
 
-            # Extract mermaid code block for separate storage
-            import re
-            mermaid_match = re.search(r'```mermaid\s*\n(.*?)```', answer, re.DOTALL)
+            mermaid_match = _re.search(r'```mermaid\s*\n(.*?)```', answer, _re.DOTALL)
             mermaid_code = mermaid_match.group(1).strip() if mermaid_match else ""
 
+            _conversation.append({"role": "agent", "text": answer, "mermaid": mermaid_code})
             _save_diagram(question, answer, mermaid_code)
-            return {"answer": answer, "mermaid": mermaid_code}
+
+            return {"answer": answer, "mermaid": mermaid_code, "conversation": _conversation}
         except Exception as exc:
             log.error("Agent error: %s", exc)
-            return JSONResponse({"error": str(exc)}, status_code=500)
+            err_msg = str(exc)
+            _conversation.append({"role": "agent", "text": f"Error: {err_msg}", "mermaid": ""})
+            return JSONResponse({"error": err_msg}, status_code=500)
+
+    @app.get("/conversation")
+    async def api_conversation():
+        return _conversation
+
+    @app.post("/reset")
+    async def api_reset():
+        nonlocal _thread_id
+        _thread_id = uuid.uuid4().hex[:8]
+        _conversation.clear()
+        return {"ok": True, "thread_id": _thread_id}
 
     @app.get("/diagrams")
     async def api_diagrams():
@@ -452,94 +474,105 @@ _WEB_HTML = r"""<!DOCTYPE html>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  background:#0f0f13;color:#e2e2e8;min-height:100vh}
+  background:#0f0f13;color:#e2e2e8;min-height:100vh;display:flex;flex-direction:column}
 
 header{background:#1a1a24;border-bottom:1px solid #2e2e40;padding:14px 28px;
-  display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
+  display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10;flex-shrink:0}
 header h1{font-size:17px;font-weight:700;color:#fff}
 .sub{font-size:12px;color:#6b6b7e}.sub span{color:#818cf8;font-weight:600}
 .spacer{flex:1}
 
-.layout{display:grid;grid-template-columns:280px 1fr;gap:20px;
-  max-width:1280px;margin:0 auto;padding:20px 24px}
+.layout{display:grid;grid-template-columns:260px 1fr;gap:0;flex:1;overflow:hidden;
+  max-width:1400px;width:100%;margin:0 auto}
 @media(max-width:720px){.layout{grid-template-columns:1fr}}
 
+/* Left sidebar */
+.sidebar{padding:16px;overflow-y:auto;border-right:1px solid #2e2e40}
 .card{background:#1a1a24;border:1px solid #2e2e40;border-radius:12px;
-  padding:18px;margin-bottom:16px}
+  padding:16px;margin-bottom:14px}
 .card:last-child{margin-bottom:0}
-.card-title{font-size:11px;font-weight:700;color:#6b6b7e;letter-spacing:.08em;
-  text-transform:uppercase;margin-bottom:14px}
 .section-label{font-size:11px;font-weight:600;color:#4a4a60;letter-spacing:.06em;
-  text-transform:uppercase;margin:16px 0 10px;padding-top:16px;
-  border-top:1px solid #1e1e2e}
-.section-label:first-child{margin-top:0;padding-top:0;border-top:none}
-
+  text-transform:uppercase;margin:14px 0 8px}
+.section-label:first-child{margin-top:0}
 label{display:block;font-size:11px;color:#6b6b7e;margin-bottom:4px;font-weight:500;
   text-transform:uppercase;letter-spacing:.05em}
-input[type=text],input[type=password],textarea{width:100%;background:#0f0f13;
-  border:1px solid #2e2e40;border-radius:7px;padding:8px 12px;font-size:13px;
-  color:#e2e2e8;outline:none;transition:border-color .15s;font-family:inherit}
-input:focus,textarea:focus{border-color:#818cf8;box-shadow:0 0 0 3px rgba(129,140,248,.1)}
-input::placeholder,textarea::placeholder{color:#4a4a60}
-textarea{resize:vertical;min-height:80px;line-height:1.5}
-.field{margin-bottom:10px}
-
-button{background:#6366f1;color:#fff;border:none;border-radius:7px;
-  padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;
-  transition:background .15s,opacity .15s;white-space:nowrap;width:100%;margin-top:10px}
-button:hover{background:#4f46e5}
-button:disabled{opacity:.45;cursor:default}
-.btn-sm{padding:6px 12px;font-size:12px;width:auto;margin-top:0}
+input[type=text],input[type=password]{width:100%;background:#0f0f13;
+  border:1px solid #2e2e40;border-radius:7px;padding:7px 10px;font-size:12px;
+  color:#e2e2e8;outline:none}
+input:focus{border-color:#818cf8}
+.field{margin-bottom:8px}
+.btn{background:#6366f1;color:#fff;border:none;border-radius:7px;
+  padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;width:100%;margin-top:8px}
+.btn:hover{background:#4f46e5}
+.btn:disabled{opacity:.45}
+.btn-sm{padding:5px 10px;font-size:11px;width:auto;margin-top:0}
 .btn-ghost{background:#1f2937;border:1px solid #374151;color:#9ca3af}
 .btn-ghost:hover{background:#374151}
-
-.status-row{display:flex;align-items:center;gap:7px;margin-top:10px;
-  padding:8px 12px;background:#0f0f13;border:1px solid #1e1e2e;border-radius:7px;
-  font-size:12px}
-.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.dot.on{background:#10b981;box-shadow:0 0 5px #10b981}
+.btn-danger{background:#7f1d1d;color:#fca5a5}
+.btn-danger:hover{background:#991b1b}
+.status-row{display:flex;align-items:center;gap:7px;margin-top:8px;
+  padding:6px 10px;background:#0f0f13;border:1px solid #1e1e2e;border-radius:7px;font-size:11px}
+.dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.dot.on{background:#10b981;box-shadow:0 0 4px #10b981}
 .dot.off{background:#374151}
 .status-text{color:#6b6b7e;flex:1}
 
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+/* Right panel — diagram + chat */
+.main{display:flex;flex-direction:column;overflow:hidden}
+
+/* Pinned diagram */
+#pinnedDiagram{background:#1a1a24;border-bottom:1px solid #2e2e40;display:none;flex-shrink:0}
+#pinnedDiagram.visible{display:block}
+.pinned-header{display:flex;align-items:center;gap:8px;padding:10px 20px 0}
+.pinned-title{font-size:11px;font-weight:700;color:#6b6b7e;letter-spacing:.08em;text-transform:uppercase;flex:1}
+#pinnedRender{background:#fff;border-radius:8px;margin:10px 20px;padding:16px;
+  text-align:center;overflow-x:auto;max-height:360px;overflow-y:auto}
+#pinnedRender svg{max-width:100%;height:auto}
+#pinnedError{display:none;margin:0 20px 10px;padding:8px 12px;background:#451a03;
+  border:1px solid #78350f;border-radius:7px;font-size:11px;color:#fbbf24}
+.pinned-actions{display:flex;gap:6px;padding:0 20px 12px;justify-content:flex-end}
+
+/* Chat thread */
+#chatThread{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:85%;animation:fadein .2s ease}
+.msg-user{align-self:flex-end;background:#6366f1;color:#fff;border-radius:12px 12px 2px 12px;
+  padding:10px 14px;font-size:13px;line-height:1.5}
+.msg-agent{align-self:flex-start;background:#1a1a24;border:1px solid #2e2e40;
+  border-radius:12px 12px 12px 2px;padding:12px 16px;font-size:13px;line-height:1.7;color:#d1d5db}
+.msg-agent strong{color:#fff}
+.msg-agent code{background:#0f0f13;padding:1px 5px;border-radius:3px;font-size:12px}
+.msg-diagram{background:#fff;border-radius:8px;padding:12px;margin:8px 0;
+  text-align:center;overflow-x:auto}
+.msg-diagram svg{max-width:100%;height:auto}
+.msg-thinking{color:#6b6b7e;font-style:italic;font-size:13px;padding:10px 14px}
+.welcome{text-align:center;color:#4a4a60;padding:40px 20px;flex:1;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.welcome h2{font-size:18px;color:#6b6b7e;font-weight:600}
+
+/* Chips */
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:600px}
 .chip{background:#111827;border:1px solid #1e293b;border-radius:6px;
   padding:5px 10px;font-size:12px;color:#94a3b8;cursor:pointer;transition:all .15s}
 .chip:hover{background:#6366f1;border-color:#6366f1;color:#fff}
 
-.thinking{color:#6b6b7e;font-style:italic;font-size:13px}
-.spinner{display:inline-block;animation:spin .7s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
+/* Input bar */
+.input-bar{padding:12px 20px;border-top:1px solid #2e2e40;background:#1a1a24;flex-shrink:0}
+.input-row{display:flex;gap:8px;align-items:flex-end}
+#chatInput{flex:1;background:#0f0f13;border:1px solid #2e2e40;border-radius:8px;
+  padding:10px 14px;font-size:14px;color:#e2e2e8;outline:none;font-family:inherit;
+  resize:none;min-height:44px;max-height:120px;line-height:1.4}
+#chatInput:focus{border-color:#818cf8}
+#chatInput::placeholder{color:#4a4a60}
+#chatSend{background:#6366f1;color:#fff;border:none;border-radius:8px;
+  padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;height:44px;white-space:nowrap}
+#chatSend:hover{background:#4f46e5}
+#chatSend:disabled{opacity:.45;cursor:default}
+.refine-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.refine-chips .chip{font-size:11px;padding:3px 8px}
+
 @keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.fadein{animation:fadein .25s ease}
-
-/* Diagram display */
-#diagramPanel{display:none;margin-top:14px}
-#diagramPanel.visible{display:block}
-#diagramRender{background:#fff;border-radius:10px;padding:20px;text-align:center;
-  min-height:200px;overflow-x:auto}
-#diagramRender svg{max-width:100%;height:auto}
-.diagram-actions{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
-#diagramError{display:none;margin-top:10px;padding:10px 14px;background:#451a03;
-  border:1px solid #78350f;border-radius:7px;font-size:12px;color:#fbbf24}
-
-/* Explanation text */
-#explanation{margin-top:14px;padding:14px;background:#111827;border:1px solid #1e293b;
-  border-radius:9px;font-size:13px;line-height:1.7;color:#d1d5db;display:none}
-#explanation.visible{display:block}
-#explanation strong{color:#fff}
-#explanation a{color:#818cf8}
-
-/* History */
-.hist-item{border:1px solid #2e2e40;border-radius:8px;margin-bottom:8px;overflow:hidden}
-.hist-header{padding:10px 14px;display:flex;align-items:center;gap:8px;cursor:pointer}
-.hist-header:hover{background:#1f2937}
-.hist-query{font-size:12px;font-weight:600;color:#c5cae9;flex:1;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hist-time{font-size:10px;color:#6b7280}
-.hist-toggle{font-size:11px;color:#4b5563}
-.hist-body{padding:12px 14px;border-top:1px solid #2e2e40;background:#0f0f13;display:none}
-.hist-body.open{display:block}
-.empty{font-size:13px;color:#4b5563;text-align:center;padding:28px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;animation:spin .7s linear infinite}
 </style>
 </head>
 <body>
@@ -552,80 +585,98 @@ button:disabled{opacity:.45;cursor:default}
 
 <div class="layout">
 
-  <!-- ══ Left panel ══ -->
-  <div>
+  <!-- ══ Left sidebar ══ -->
+  <div class="sidebar">
 
     <div class="card">
       <div class="section-label">Settings</div>
       <div class="field">
-        <label>Tavily key <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#4a4a60">— optional, for research</span></label>
+        <label>Tavily key <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#4a4a60">— optional</span></label>
         <input id="tavilyKey" type="password" placeholder="tvly-…" />
       </div>
-      <button id="saveBtn" onclick="saveCreds()">Save</button>
+      <button class="btn" id="saveBtn" onclick="saveCreds()">Save</button>
       <div class="status-row">
         <span class="dot off" id="apiDot"></span>
-        <span class="status-text" id="apiLabel">Web search not configured</span>
+        <span class="status-text" id="apiLabel">Web search off</span>
       </div>
     </div>
 
     <div class="card">
       <div class="section-label">Diagram types</div>
-      <p style="font-size:12px;color:#6b6b7e;line-height:1.7">
-        The agent automatically picks the best diagram type:<br><br>
-        <strong style="color:#e2e2e8">Flowchart</strong> — system components &amp; connections<br>
-        <strong style="color:#e2e2e8">Sequence</strong> — request flows over time<br>
+      <p style="font-size:11px;color:#6b6b7e;line-height:1.6">
+        <strong style="color:#e2e2e8">Flowchart</strong> — components &amp; connections<br>
+        <strong style="color:#e2e2e8">Sequence</strong> — request flows<br>
         <strong style="color:#e2e2e8">ER diagram</strong> — database schema<br>
-        <strong style="color:#e2e2e8">State diagram</strong> — lifecycles &amp; transitions<br><br>
-        <span style="color:#4a4a60">Or ask for a specific type: "show it as a sequence diagram"</span>
+        <strong style="color:#e2e2e8">State</strong> — lifecycles<br><br>
+        <span style="color:#4a4a60">The agent picks automatically, or ask for a specific type.</span>
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Session</div>
+      <button class="btn btn-danger" onclick="resetConversation()" style="width:100%">New diagram</button>
+      <p style="font-size:10px;color:#4a4a60;margin-top:6px;line-height:1.4">
+        Clears the conversation and starts fresh. The agent forgets previous context.
       </p>
     </div>
 
   </div>
 
   <!-- ══ Right panel ══ -->
-  <div>
+  <div class="main">
 
-    <!-- Input -->
-    <div class="card">
-      <div class="card-title">Describe your system</div>
-      <div class="chips">
-        <span class="chip" onclick="ask(this.textContent)">Microservices e-commerce platform</span>
-        <span class="chip" onclick="ask(this.textContent)">CI/CD pipeline from git push to production</span>
-        <span class="chip" onclick="ask(this.textContent)">Real-time chat system with WebSockets</span>
-        <span class="chip" onclick="ask(this.textContent)">RAG pipeline for document Q&A</span>
-        <span class="chip" onclick="ask(this.textContent)">OAuth2 login flow as a sequence diagram</span>
-        <span class="chip" onclick="ask(this.textContent)">Kafka event streaming architecture</span>
-        <span class="chip" onclick="ask(this.textContent)">Order lifecycle as a state diagram</span>
-        <span class="chip" onclick="ask(this.textContent)">E-commerce database schema as ER diagram</span>
+    <!-- Pinned diagram -->
+    <div id="pinnedDiagram">
+      <div class="pinned-header">
+        <span class="pinned-title">Current diagram</span>
       </div>
-      <div style="display:flex;gap:8px;align-items:flex-end">
-        <textarea id="chatInput" rows="2"
-          placeholder="Describe the system or architecture you want to diagram…"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();ask()}"></textarea>
-        <button class="btn-sm" id="chatSend" onclick="ask()"
-          style="height:42px;padding:0 20px">Generate</button>
-      </div>
-    </div>
-
-    <!-- Diagram output -->
-    <div class="card" id="diagramPanel">
-      <div class="card-title">Diagram</div>
-      <div id="diagramRender"></div>
-      <div id="diagramError"></div>
-      <div class="diagram-actions">
+      <div id="pinnedRender"></div>
+      <div id="pinnedError"></div>
+      <div class="pinned-actions">
         <button class="btn-sm btn-ghost" onclick="downloadSVG()">Download SVG</button>
-        <button class="btn-sm btn-ghost" onclick="copyMermaid()">Copy Mermaid code</button>
+        <button class="btn-sm btn-ghost" onclick="copyMermaid()">Copy Mermaid</button>
       </div>
     </div>
 
-    <!-- Explanation -->
-    <div id="explanation"></div>
+    <!-- Chat thread -->
+    <div id="chatThread">
+      <div class="welcome" id="welcomeScreen">
+        <h2>Describe a system to get started</h2>
+        <p style="color:#4a4a60;font-size:13px;max-width:500px">
+          The agent will create an architecture diagram and you can refine it
+          conversationally — add components, change diagram types, drill into subsystems.
+        </p>
+        <div class="chips" id="starterChips">
+          <span class="chip" onclick="ask(this.textContent)">Microservices e-commerce platform</span>
+          <span class="chip" onclick="ask(this.textContent)">CI/CD pipeline from git push to production</span>
+          <span class="chip" onclick="ask(this.textContent)">Real-time chat with WebSockets</span>
+          <span class="chip" onclick="ask(this.textContent)">RAG pipeline for document Q&A</span>
+          <span class="chip" onclick="ask(this.textContent)">OAuth2 login as a sequence diagram</span>
+          <span class="chip" onclick="ask(this.textContent)">Kafka event streaming architecture</span>
+          <span class="chip" onclick="ask(this.textContent)">Order lifecycle as state diagram</span>
+          <span class="chip" onclick="ask(this.textContent)">E-commerce DB as ER diagram</span>
+        </div>
+      </div>
+    </div>
 
-    <!-- History -->
-    <div class="card">
-      <div class="card-title">History</div>
-      <div id="histList">
-        <div class="empty">No diagrams yet — describe a system above.</div>
+    <!-- Input bar -->
+    <div class="input-bar">
+      <div class="input-row">
+        <textarea id="chatInput" rows="1"
+          placeholder="Describe a system, or refine the current diagram…"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();ask()}"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+        <button id="chatSend" onclick="ask()">Send</button>
+      </div>
+      <div class="refine-chips" id="refineChips" style="display:none">
+        <span class="chip" onclick="ask(this.textContent)">Add a cache layer</span>
+        <span class="chip" onclick="ask(this.textContent)">Add a message queue</span>
+        <span class="chip" onclick="ask(this.textContent)">Add monitoring / logging</span>
+        <span class="chip" onclick="ask(this.textContent)">Show as sequence diagram</span>
+        <span class="chip" onclick="ask(this.textContent)">Make it more detailed</span>
+        <span class="chip" onclick="ask(this.textContent)">Simplify it</span>
+        <span class="chip" onclick="ask(this.textContent)">Add authentication flow</span>
+        <span class="chip" onclick="ask(this.textContent)">Show the database schema as ER</span>
       </div>
     </div>
 
@@ -641,23 +692,37 @@ mermaid.initialize({
 })
 
 let _lastMermaid = ''
+let _hasMessages = false
 
 async function ask(question) {
   const inp = document.getElementById('chatInput')
   const btn = document.getElementById('chatSend')
-  const panel = document.getElementById('diagramPanel')
-  const render = document.getElementById('diagramRender')
-  const errEl = document.getElementById('diagramError')
-  const expl = document.getElementById('explanation')
+  const thread = document.getElementById('chatThread')
   const q = question || inp.value.trim()
   if (!q) return
-  inp.value = q
+  inp.value = ''
+  inp.style.height = 'auto'
 
-  btn.disabled = true; btn.textContent = 'Generating…'
-  panel.className = 'card visible fadein'
-  render.innerHTML = '<span class="thinking"><span class="spinner">⟳</span> Generating architecture diagram…</span>'
-  errEl.style.display = 'none'
-  expl.className = ''; expl.innerHTML = ''
+  // Hide welcome, show refine chips
+  const welcome = document.getElementById('welcomeScreen')
+  if (welcome) welcome.remove()
+  document.getElementById('refineChips').style.display = 'flex'
+  _hasMessages = true
+
+  // Add user message
+  const userEl = document.createElement('div')
+  userEl.className = 'msg msg-user'
+  userEl.textContent = q
+  thread.appendChild(userEl)
+
+  // Add thinking indicator
+  const thinkEl = document.createElement('div')
+  thinkEl.className = 'msg msg-thinking'
+  thinkEl.innerHTML = '<span class="spinner">&#10227;</span> Generating diagram…'
+  thread.appendChild(thinkEl)
+  thread.scrollTop = thread.scrollHeight
+
+  btn.disabled = true
 
   try {
     const r = await fetch('/ask', {
@@ -671,44 +736,96 @@ async function ask(question) {
     }
     const data = await r.json()
 
-    // Render mermaid diagram
+    // Remove thinking indicator
+    thinkEl.remove()
+
+    // Build agent message
+    const agentEl = document.createElement('div')
+    agentEl.className = 'msg msg-agent'
+
+    // Inline diagram in chat bubble
     if (data.mermaid) {
       _lastMermaid = data.mermaid
+      const diagDiv = document.createElement('div')
+      diagDiv.className = 'msg-diagram'
       try {
-        const { svg } = await mermaid.render('diag-' + Date.now(), data.mermaid)
-        render.innerHTML = svg
-        errEl.style.display = 'none'
-      } catch (mermErr) {
-        render.innerHTML = '<pre style="text-align:left;font-size:12px;color:#1a1a2e;white-space:pre-wrap;margin:0">' +
-          esc(data.mermaid) + '</pre>'
-        errEl.innerHTML = 'Mermaid rendering failed: ' + esc(mermErr.message) +
-          '<br>The raw code is shown above — you can ask the agent to fix the syntax.'
-        errEl.style.display = 'block'
+        const { svg } = await mermaid.render('chat-' + Date.now(), data.mermaid)
+        diagDiv.innerHTML = svg
+      } catch(e) {
+        diagDiv.innerHTML = '<pre style="text-align:left;font-size:11px;color:#666;margin:0;white-space:pre-wrap">' + esc(data.mermaid) + '</pre>'
       }
-    } else {
-      render.innerHTML = '<span style="color:#6b7280">No diagram code found in response.</span>'
+      agentEl.appendChild(diagDiv)
+
+      // Update pinned diagram
+      await updatePinned(data.mermaid)
     }
 
-    // Show explanation (everything outside the mermaid block)
-    const explText = data.answer
-      .replace(/```mermaid[\s\S]*?```/g, '')
-      .trim()
+    // Explanation text (strip mermaid block)
+    const explText = data.answer.replace(/```mermaid[\s\S]*?```/g, '').trim()
     if (explText) {
-      expl.innerHTML = renderMd(explText)
-      expl.className = 'visible fadein'
+      const textDiv = document.createElement('div')
+      textDiv.innerHTML = renderMd(explText)
+      agentEl.appendChild(textDiv)
     }
 
-    await loadHistory()
+    thread.appendChild(agentEl)
+    thread.scrollTop = thread.scrollHeight
 
   } catch (err) {
-    render.innerHTML = '<span style="color:#f87171">Error: ' + esc(err.message) + '</span>'
+    thinkEl.remove()
+    const errEl = document.createElement('div')
+    errEl.className = 'msg msg-agent'
+    errEl.innerHTML = '<span style="color:#f87171">Error: ' + esc(err.message) + '</span>'
+    thread.appendChild(errEl)
   } finally {
-    btn.disabled = false; btn.textContent = 'Generate'
+    btn.disabled = false
   }
 }
 
+async function updatePinned(mermaidCode) {
+  const panel = document.getElementById('pinnedDiagram')
+  const render = document.getElementById('pinnedRender')
+  const errEl = document.getElementById('pinnedError')
+  panel.className = 'visible'
+  errEl.style.display = 'none'
+  try {
+    const { svg } = await mermaid.render('pin-' + Date.now(), mermaidCode)
+    render.innerHTML = svg
+  } catch(e) {
+    render.innerHTML = '<pre style="text-align:left;font-size:11px;color:#666;margin:0;white-space:pre-wrap">' + esc(mermaidCode) + '</pre>'
+    errEl.textContent = 'Rendering failed — ask the agent to fix the syntax.'
+    errEl.style.display = 'block'
+  }
+}
+
+async function resetConversation() {
+  await fetch('/reset', { method: 'POST' })
+  _lastMermaid = ''
+  _hasMessages = false
+  document.getElementById('pinnedDiagram').className = ''
+  document.getElementById('refineChips').style.display = 'none'
+  document.getElementById('chatThread').innerHTML = `
+    <div class="welcome" id="welcomeScreen">
+      <h2>Describe a system to get started</h2>
+      <p style="color:#4a4a60;font-size:13px;max-width:500px">
+        The agent will create an architecture diagram and you can refine it
+        conversationally — add components, change diagram types, drill into subsystems.
+      </p>
+      <div class="chips" id="starterChips">
+        <span class="chip" onclick="ask(this.textContent)">Microservices e-commerce platform</span>
+        <span class="chip" onclick="ask(this.textContent)">CI/CD pipeline from git push to production</span>
+        <span class="chip" onclick="ask(this.textContent)">Real-time chat with WebSockets</span>
+        <span class="chip" onclick="ask(this.textContent)">RAG pipeline for document Q&A</span>
+        <span class="chip" onclick="ask(this.textContent)">OAuth2 login as a sequence diagram</span>
+        <span class="chip" onclick="ask(this.textContent)">Kafka event streaming architecture</span>
+        <span class="chip" onclick="ask(this.textContent)">Order lifecycle as state diagram</span>
+        <span class="chip" onclick="ask(this.textContent)">E-commerce DB as ER diagram</span>
+      </div>
+    </div>`
+}
+
 function downloadSVG() {
-  const svg = document.querySelector('#diagramRender svg')
+  const svg = document.querySelector('#pinnedRender svg')
   if (!svg) return
   const blob = new Blob([svg.outerHTML], {type: 'image/svg+xml'})
   const a = document.createElement('a')
@@ -720,7 +837,9 @@ function downloadSVG() {
 function copyMermaid() {
   if (!_lastMermaid) return
   navigator.clipboard.writeText(_lastMermaid).then(() => {
-    const btn = event.target
+    const btns = document.querySelectorAll('.pinned-actions .btn-ghost')
+    const btn = btns[1]
+    if (!btn) return
     const orig = btn.textContent
     btn.textContent = 'Copied!'
     setTimeout(() => btn.textContent = orig, 1500)
@@ -731,64 +850,11 @@ function renderMd(text) {
   return text
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
-    .replace(/^### (.+)$/gm, '<div style="font-size:13px;font-weight:700;color:#fff;margin:14px 0 6px">$1</div>')
-    .replace(/^## (.+)$/gm, '<div style="font-size:14px;font-weight:700;color:#fff;margin:18px 0 8px">$1</div>')
-    .replace(/^- (.+)$/gm, '<div style="padding-left:16px;margin:3px 0">&#8226; $1</div>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^### (.+)$/gm, '<div style="font-size:13px;font-weight:700;color:#fff;margin:12px 0 4px">$1</div>')
+    .replace(/^## (.+)$/gm, '<div style="font-size:14px;font-weight:700;color:#fff;margin:16px 0 6px">$1</div>')
+    .replace(/^- (.+)$/gm, '<div style="padding-left:14px;margin:2px 0">&#8226; $1</div>')
     .replace(/\n/g, '<br>')
-}
-
-async function loadHistory() {
-  try {
-    const items = await fetch('/diagrams').then(r => r.json())
-    renderHistory(items)
-  } catch(e) {}
-}
-
-function renderHistory(items) {
-  const el = document.getElementById('histList')
-  if (!items.length) {
-    el.innerHTML = '<div class="empty">No diagrams yet.</div>'
-    return
-  }
-  el.innerHTML = items.map((r, i) => `
-    <div class="hist-item">
-      <div class="hist-header" onclick="toggleHist(${i})">
-        <span class="hist-query">${esc(r.query)}</span>
-        <span class="hist-time">${new Date(r.created_at).toLocaleString()}</span>
-        <span class="hist-toggle" id="hi${i}">&#9656;</span>
-      </div>
-      <div class="hist-body" id="hb${i}">
-        ${r.mermaid ? '<pre style="font-size:11px;color:#94a3b8;white-space:pre-wrap;margin:0 0 10px">' + esc(r.mermaid) + '</pre>' : ''}
-        <button class="btn-sm btn-ghost" onclick="loadDiagram(${i})" style="margin-bottom:8px">Load this diagram</button>
-        <div style="font-size:12px;line-height:1.6;color:#9ca3af">${renderMd(r.response.replace(/\x60\x60\x60mermaid[\\s\\S]*?\x60\x60\x60/g, '').trim())}</div>
-      </div>
-    </div>`).join('')
-  // Store for loading
-  el._items = items
-}
-
-function toggleHist(i) {
-  const body = document.getElementById('hb'+i)
-  const icon = document.getElementById('hi'+i)
-  body.classList.toggle('open')
-  icon.innerHTML = body.classList.contains('open') ? '&#9662;' : '&#9656;'
-}
-
-async function loadDiagram(i) {
-  const el = document.getElementById('histList')
-  const item = el._items && el._items[i]
-  if (!item || !item.mermaid) return
-  _lastMermaid = item.mermaid
-  const panel = document.getElementById('diagramPanel')
-  const render = document.getElementById('diagramRender')
-  panel.className = 'card visible fadein'
-  try {
-    const { svg } = await mermaid.render('hist-' + Date.now(), item.mermaid)
-    render.innerHTML = svg
-  } catch(e) {
-    render.innerHTML = '<pre style="text-align:left;font-size:12px;color:#1a1a2e">' + esc(item.mermaid) + '</pre>'
-  }
 }
 
 function esc(s) {
@@ -815,16 +881,61 @@ async function saveCreds() {
 
 function setApiUI(ok) {
   document.getElementById('apiDot').className = 'dot ' + (ok ? 'on' : 'off')
-  document.getElementById('apiLabel').textContent = ok
-    ? 'Web search available' : 'Web search not configured (optional)'
+  document.getElementById('apiLabel').textContent = ok ? 'Web search on' : 'Web search off'
 }
 
-fetch('/settings').then(r => r.json()).then(s => {
-  setApiUI(s.tavily_configured)
-  if (s.tavily_configured)
-    document.getElementById('tavilyKey').value = '••••••••••'
-})
-loadHistory()
+/* --- Init: restore conversation if server has one --- */
+async function init() {
+  fetch('/settings').then(r => r.json()).then(s => {
+    setApiUI(s.tavily_configured)
+    if (s.tavily_configured)
+      document.getElementById('tavilyKey').value = '••••••••••'
+  })
+
+  try {
+    const convo = await fetch('/conversation').then(r => r.json())
+    if (convo && convo.length > 0) {
+      document.getElementById('welcomeScreen')?.remove()
+      document.getElementById('refineChips').style.display = 'flex'
+      _hasMessages = true
+      const thread = document.getElementById('chatThread')
+      for (const msg of convo) {
+        if (msg.role === 'user') {
+          const el = document.createElement('div')
+          el.className = 'msg msg-user'
+          el.textContent = msg.text
+          thread.appendChild(el)
+        } else {
+          const el = document.createElement('div')
+          el.className = 'msg msg-agent'
+          if (msg.mermaid) {
+            _lastMermaid = msg.mermaid
+            const diagDiv = document.createElement('div')
+            diagDiv.className = 'msg-diagram'
+            try {
+              const { svg } = await mermaid.render('restore-' + Date.now() + '-' + Math.random().toString(36).slice(2,6), msg.mermaid)
+              diagDiv.innerHTML = svg
+            } catch(e) {
+              diagDiv.innerHTML = '<pre style="text-align:left;font-size:11px;color:#666;margin:0;white-space:pre-wrap">' + esc(msg.mermaid) + '</pre>'
+            }
+            el.appendChild(diagDiv)
+          }
+          const explText = msg.text.replace(/```mermaid[\s\S]*?```/g, '').trim()
+          if (explText) {
+            const textDiv = document.createElement('div')
+            textDiv.innerHTML = renderMd(explText)
+            el.appendChild(textDiv)
+          }
+          thread.appendChild(el)
+        }
+      }
+      thread.scrollTop = thread.scrollHeight
+      if (_lastMermaid) await updatePinned(_lastMermaid)
+    }
+  } catch(e) {}
+}
+
+init()
 </script>
 </body>
 </html>
