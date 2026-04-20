@@ -1,5 +1,11 @@
 # cuga-apps
 
+## Contributing a new app
+
+See [app_contribution_guidelines.md](app_contribution_guidelines.md) for the full checklist: picking a port, directory layout, registering in `launch.py`, updating `requirements.apps.txt`, adding a UI card, and updating this README.
+
+---
+
 ## Dashboard UI
 
 `ui/` is a React/Vite planning and overview dashboard — use cases, feature
@@ -106,9 +112,15 @@ python launch.py logs newsletter stock_alert --tail 50
 | smart_todo | 18800 | http://localhost:18800 |
 | stock_alert | 18801 | http://localhost:18801 |
 | deck_forge | 18802 | http://localhost:18802 |
+| youtube_research | 18803 | http://localhost:18803 |
+| arch_diagram | 18804 | http://localhost:18804 |
+| hiking_research | 18805 | http://localhost:18805 |
 | server_monitor | 8767 | http://localhost:8767 |
 | video_qa | 8766 | http://localhost:8766 |
 | travel_planner | 8090 | http://localhost:8090 |
+| movie_recommender | 18806 | http://localhost:18806 |
+| webpage_summarizer | 8071 | http://localhost:8071 |
+| code_reviewer | 18807 | http://localhost:18807 |
 
 ### .env file
 

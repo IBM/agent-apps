@@ -818,6 +818,179 @@ CugaAgent → get_review_summary("Mist Trail", "Yosemite")
     ],
     appUrl: 'http://localhost:18805',
   },
+  {
+    id: 'movie-recommender',
+    name: 'Movie Recommender',
+    tagline: 'Tell the agent what you love — get a personalised watch-next list',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A conversational movie recommendation agent with a browser UI. Tell it about films you enjoy, genres, favourite directors and actors, or your current mood — the agent builds a taste profile and recommends 5–8 films you will love. Movie details are verified via the Wikipedia REST API (no extra API key needed). Recommendations appear as cards in the right panel alongside a live view of your taste profile.',
+    category: 'content',
+    status: 'working',
+    channels: [],
+    tools: ['lookup_movie()', 'save_preference()', 'get_preferences()', 'save_recommendations()'],
+    demoPath: 'apps/movie_recommender',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      setup: [
+        'cd apps/movie_recommender',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18806',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent uses save_preference to record genres, liked/disliked films, actors, directors, and moods; get_preferences recalls the full profile; lookup_movie verifies details via Wikipedia; save_recommendations persists the structured card list. GET /session/{thread_id} returns the live profile and recommendation cards.',
+    diagram: `python main.py  →  http://127.0.0.1:8072
+
+User: "I love Inception and The Dark Knight"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ save_preference(category="liked_movie", value="Inception")
+      ├─ save_preference(category="liked_movie", value="The Dark Knight")
+      │
+User: "Recommend something similar"
+      ├─ get_preferences()  → liked_movies, genres, moods …
+      ├─ lookup_movie("Memento")   ← Wikipedia REST API
+      ├─ lookup_movie("Prisoners")
+      │
+      ├─ save_recommendations([{title, year, genre, reason, rating}, ...])
+      ▼
+Recommendation cards rendered in the right panel`,
+    cugaContribution: [
+      'save_preference / get_preferences build a persistent taste profile within the session — the agent never forgets what you said earlier',
+      'lookup_movie verifies film details via Wikipedia before suggesting — no hallucinated plot descriptions',
+      'save_recommendations pushes structured JSON to the UI so cards render automatically without UI polling logic',
+      'Warm, film-enthusiast persona defined in the skill prompt — swap the prompt to change tone or domain (books, games, etc.)',
+    ],
+    examples: [
+      "I love Inception and The Dark Knight — what should I watch next?",
+      "I enjoy sci-fi and psychological thrillers, suggest 5 films",
+      "My favourite director is Denis Villeneuve",
+      "I'm in the mood for something light and funny tonight",
+      "I dislike jump-scare horror — what else is good?",
+      "Recommend something with Tom Hanks I might have missed",
+    ],
+    appUrl: 'http://localhost:18806',
+  },
+  {
+    id: 'webpage-summarizer',
+    name: 'Webpage Summarizer',
+    tagline: 'Paste any URL — get a structured plain-English summary instantly',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A browser UI that fetches and summarises any webpage you provide. Paste a URL into the chat and the agent retrieves the page, strips HTML boilerplate (scripts, nav, footers), extracts readable text, and returns a structured summary: title, source URL, 2–3 sentence overview, key topics as bullet points, important facts, and a bottom-line takeaway. Also lists hyperlinks found on the page on request.',
+    category: 'content',
+    status: 'working',
+    channels: [],
+    tools: ['fetch_webpage()', 'fetch_webpage_links()'],
+    demoPath: 'apps/webpage_summarizer',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      setup: [
+        'cd apps/webpage_summarizer',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 8071',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls fetch_webpage (httpx + BeautifulSoup, truncated to 12 000 chars) → produces structured summary. fetch_webpage_links returns the list of external links for site exploration. No state is stored between requests.',
+    diagram: `python main.py  →  http://127.0.0.1:8071
+
+User: "Summarize https://en.wikipedia.org/wiki/Large_language_model"
+      │  POST /ask
+      ▼
+CugaAgent
+      └─ fetch_webpage("https://en.wikipedia.org/wiki/Large_language_model")
+           │  httpx GET + BeautifulSoup strip
+           │  title, meta description, body text (≤12 000 chars)
+           ▼
+Structured summary:
+  Title: Large language model — Wikipedia
+  Overview: A large language model (LLM) is …
+  Key topics: • Architecture • Training • RLHF • Applications …
+  Bottom line: LLMs are transformer-based models …
+
+User: "List all links on https://news.ycombinator.com"
+      └─ fetch_webpage_links(url) → up to 40 external links`,
+    cugaContribution: [
+      'fetch_webpage strips nav, header, footer, script, and style tags before sending text to the LLM — agent only sees signal, not boilerplate',
+      'Content truncated to 12 000 chars to stay within context limits; the agent handles truncation gracefully',
+      'Structured summary format (overview → bullets → bottom line) enforced by the system prompt — consistent output regardless of page type',
+      'fetch_webpage_links enables lightweight site exploration without a separate crawling tool',
+    ],
+    examples: [
+      "Summarize https://en.wikipedia.org/wiki/Large_language_model",
+      "What is this page about? https://python.org",
+      "Key takeaways from https://openai.com/blog",
+      "List all links on https://news.ycombinator.com",
+      "https://github.com/langchain-ai/langchain — give me a one-paragraph overview",
+    ],
+    appUrl: 'http://localhost:8071',
+  },
+  {
+    id: 'code-reviewer',
+    name: 'Code Reviewer',
+    tagline: 'Paste or upload code — get structured bug, security, and style feedback',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'An AI-powered code review tool with a browser UI. Paste a snippet or upload a source file (.py, .js, .ts, .java, .go, .rs, .cpp, .sql, .sh, and more) and choose a focus mode: Full Review, Security, Performance, Style, Bugs, Architecture, or Testability. The agent detects the language, validates Python syntax via AST, extracts code metrics (LOC, complexity, top-level definitions), and returns a structured review with severity-rated issues, concrete suggestions, and deeper insights. Ask follow-up questions about the loaded code without re-submitting. Session review history is collapsible and copyable.',
+    category: 'devtools',
+    status: 'working',
+    channels: [],
+    tools: ['check_python_syntax()', 'extract_code_metrics()', 'detect_language()'],
+    demoPath: 'apps/code_reviewer',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      setup: [
+        'cd apps/code_reviewer',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18807',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /review → CugaAgent calls detect_language, check_python_syntax (Python only, AST-based), and extract_code_metrics → structured review with severity badges. POST /ask → free-form follow-up on any loaded code. POST /upload → reads a source file and returns its text so the UI can populate the code area. GET /history → in-memory list of last 50 reviews (session-scoped).',
+    diagram: `python main.py  →  http://127.0.0.1:18807
+
+User: pastes Python function, selects "Security" focus, clicks Review
+      │  POST /review  {code, language:"python", focus:"security"}
+      ▼
+CugaAgent
+      ├─ detect_language(code)          → {"language":"python","confidence":"high"}
+      ├─ check_python_syntax(code)      → {"valid":true,"error":null}
+      ├─ extract_code_metrics(code)     → {total_lines:42, branch_complexity:7, ...}
+      ▼
+Structured review:
+  ### Summary  — Good overall, one injection risk
+  ### Issues Found
+    [HIGH] Unsanitised user input passed to subprocess.run() — line 14
+  ### Suggestions
+    1. Use shlex.quote() or subprocess list-form …
+  ### Metrics  — Lines: 42 (non-blank: 36), Complexity: 7
+
+User: "How would you refactor this using the strategy pattern?"
+      │  POST /ask
+      ▼
+CugaAgent (code injected as context) → refactoring walkthrough`,
+    cugaContribution: [
+      'check_python_syntax runs AST.parse before the LLM sees the code — syntax errors reported instantly, no token waste',
+      'extract_code_metrics gives the agent concrete numbers (LOC, branch count, top-level defs) to ground its review in facts',
+      'Focus mode chips translate to a focus_hint injected into the prompt — same agent, different lens, no code duplication',
+      'Session review history (last 50) is maintained in-memory and displayed as collapsible cards with copy-to-clipboard',
+    ],
+    examples: [
+      "Paste a Python function and select Bugs focus",
+      "Upload a JavaScript file and select Security focus",
+      "Paste a SQL query and ask: How could I optimise this for 10M rows?",
+      "Load a Go file and click Architecture",
+      "How would you refactor this using the strategy pattern?",
+      "Is there any XSS risk in the current code?",
+    ],
+    appUrl: 'http://localhost:18807',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {

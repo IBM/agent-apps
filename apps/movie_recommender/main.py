@@ -341,7 +341,7 @@ def _web(port: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Movie Recommender — CUGA demo app")
-    parser.add_argument("--port", type=int, default=8072)
+    parser.add_argument("--port", type=int, default=18806)
     parser.add_argument(
         "--provider", "-p", default=None,
         choices=["rits", "watsonx", "openai", "anthropic", "litellm", "ollama"],

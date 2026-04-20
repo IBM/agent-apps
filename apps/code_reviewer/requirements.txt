@@ -1,0 +1,3 @@
+# Code Reviewer — extra requirements
+# (fastapi, uvicorn, pydantic, langchain-core, cuga are in the shared requirements)
+python-multipart   # required for FastAPI file uploads

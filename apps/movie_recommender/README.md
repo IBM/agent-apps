@@ -9,7 +9,7 @@ Movie details are looked up via the free Wikipedia REST API — no additional AP
 
 ## Port
 
-**8072**
+**18806**
 
 ## Quick start
 
@@ -24,10 +24,10 @@ export ANTHROPIC_API_KEY=<your-key>
 export AGENT_SETTING_CONFIG=/path/to/settings.toml
 
 # Run
-python main.py --port 8072
+python main.py --port 18806
 
 # Open in browser
-open http://127.0.0.1:8072
+open http://127.0.0.1:18806
 ```
 
 ## Environment variables

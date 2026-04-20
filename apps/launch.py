@@ -84,7 +84,10 @@ APPS: list[dict] = [
     dict(name="deck_forge",      dir="deck_forge",      default_port=18802, cmd=_python_cmd()),
     dict(name="youtube_research", dir="youtube_research", default_port=18803, cmd=_python_cmd()),
     dict(name="arch_diagram",    dir="arch_diagram",    default_port=18804, cmd=_python_cmd()),
-    dict(name="hiking_research", dir="hiking_research", default_port=18805, cmd=_python_cmd()),
+    dict(name="hiking_research",    dir="hiking_research",    default_port=18805, cmd=_python_cmd()),
+    dict(name="movie_recommender",  dir="movie_recommender",  default_port=18806, cmd=_python_cmd()),
+    dict(name="webpage_summarizer", dir="webpage_summarizer", default_port=8071,  cmd=_python_cmd()),
+    dict(name="code_reviewer",      dir="code_reviewer",      default_port=18807, cmd=_python_cmd()),
     # ── To add a new app, copy one line above and adjust the fields ──────────
 ]
 

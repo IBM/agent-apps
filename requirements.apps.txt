@@ -4,8 +4,8 @@
 #   pip install --no-cache-dir -r requirements.apps.txt
 # ============================================================
 
-# ── cuga framework (private repo, requires SSH) ──────────────
-git+ssh://git@github.com/cuga-project/cuga-agent.git@main
+# ── cuga framework ────────────────────────────────────────────
+cuga
 
 # ── Web framework ─────────────────────────────────────────────
 fastapi
@@ -47,3 +47,9 @@ python-pptx
 
 # ── stock_alert ───────────────────────────────────────────────
 # (uses requests, already listed above)
+
+# ── webpage_summarizer ────────────────────────────────────────
+beautifulsoup4
+
+# ── observability ─────────────────────────────────────────────
+openlit

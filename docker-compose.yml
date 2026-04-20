@@ -3,11 +3,9 @@
 #
 # Quick start:
 #   1. Copy apps/.env.example to apps/.env and fill in your keys
-#   2. Add your SSH key to the agent:
-#        ssh-add ~/.ssh/id_ed25519
-#   3. Build (SSH forwarded for the private cuga-agent package):
-#        docker compose build --ssh default
-#   4. Start everything:
+#   2. Build:
+#        docker compose build
+#   3. Start everything:
 #        docker compose up
 #
 # The umbrella UI is at:  http://localhost:3000
@@ -17,14 +15,17 @@
 x-apps-build: &apps-build
   context: .
   dockerfile: Dockerfile.apps
-  ssh:
-    - default
 
 # Shared env and restart policy for all Python app services
 x-app-defaults: &app-defaults
   build: *apps-build
   env_file: apps/.env
   restart: unless-stopped
+  environment:
+    # Override OTLP endpoint so containerised apps send to Phoenix
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+  depends_on:
+    - phoenix
 
 services:
 
@@ -155,6 +156,43 @@ services:
     command: python main.py --port 18805
     ports:
       - "18805:18805"
+
+  # ── 14. Movie Recommender  (port 18806) ───────────────────────
+  movie_recommender:
+    <<: *app-defaults
+    working_dir: /app/apps/movie_recommender
+    command: python main.py --port 18806
+    ports:
+      - "18806:18806"
+
+  # ── 15. Webpage Summarizer  (port 8071) ───────────────────────
+  webpage_summarizer:
+    <<: *app-defaults
+    working_dir: /app/apps/webpage_summarizer
+    command: python main.py --port 8071
+    ports:
+      - "8071:8071"
+
+  # ── 16. Code Reviewer  (port 18807) ───────────────────────────
+  code_reviewer:
+    <<: *app-defaults
+    working_dir: /app/apps/code_reviewer
+    command: python main.py --port 18807
+    ports:
+      - "18807:18807"
+
+  # ── Observability (Arize Phoenix) ───────────────────────────────
+  # Single-container LLM observability: traces, spans, token usage, latency.
+  # Apps send OTLP traces to Phoenix; open the UI at http://localhost:6006
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    ports:
+      - "6006:6006"   # Phoenix UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP (apps send traces here)
+    restart: unless-stopped
 
 # ── Named volumes for persistent app state ──────────────────────
 volumes:

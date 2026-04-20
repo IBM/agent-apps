@@ -1,42 +1,28 @@
 # syntax=docker/dockerfile:1
 # ============================================================
-# Dockerfile.apps — shared base image for all 10 cuga demo apps.
+# Dockerfile.apps — shared base image for all cuga demo apps.
 #
-# Build requires SSH agent forwarding (for the private cuga-agent repo):
-#   ssh-add ~/.ssh/id_ed25519          # add your key to the agent
-#   docker compose build --ssh default
+# Build:
+#   docker compose build
 # ============================================================
 FROM python:3.13-slim
 
 # System deps:
-#   git          — needed by pip's git+ssh:// install
-#   openssh-client — needed to authenticate with GitHub via SSH
 #   ffmpeg       — required by faster-whisper for video files
 #   libgomp1     — runtime lib for faster-whisper (OpenMP)
 #   build-essential — compiling some Python C extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git \
-        openssh-client \
         ffmpeg \
         libgomp1 \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Trust GitHub's host key so pip's git+ssh doesn't hang on a prompt
-RUN mkdir -p /root/.ssh \
-    && ssh-keyscan github.com >> /root/.ssh/known_hosts \
-    && chmod 600 /root/.ssh/known_hosts
 
 WORKDIR /app
 
 # Copy requirements first so Docker can cache this layer
 COPY requirements.apps.txt .
 
-# Install all Python dependencies.
-# The --mount=type=ssh forwards the host's SSH agent into this layer only
-# (the key is never baked into the image).
-RUN --mount=type=ssh \
-    pip install --no-cache-dir -r requirements.apps.txt
+RUN pip install --no-cache-dir -r requirements.apps.txt
 
 # Copy the full apps directory (shared helpers _llm.py, _image_utils.py + all app dirs)
 COPY apps/ ./apps/
