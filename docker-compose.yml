@@ -1,0 +1,164 @@
+# ============================================================
+# docker-compose.yml — cuga-apps full stack
+#
+# Quick start:
+#   1. Copy apps/.env.example to apps/.env and fill in your keys
+#   2. Add your SSH key to the agent:
+#        ssh-add ~/.ssh/id_ed25519
+#   3. Build (SSH forwarded for the private cuga-agent package):
+#        docker compose build --ssh default
+#   4. Start everything:
+#        docker compose up
+#
+# The umbrella UI is at:  http://localhost:3000
+# Each demo app is directly reachable at its own port (see below).
+# ============================================================
+
+x-apps-build: &apps-build
+  context: .
+  dockerfile: Dockerfile.apps
+  ssh:
+    - default
+
+# Shared env and restart policy for all Python app services
+x-app-defaults: &app-defaults
+  build: *apps-build
+  env_file: apps/.env
+  restart: unless-stopped
+
+services:
+
+  # ── Umbrella UI (React / Vite → nginx) ──────────────────────
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  # ── 1. Newsletter Intelligence  (port 18793) ─────────────────
+  newsletter:
+    <<: *app-defaults
+    working_dir: /app/apps/newsletter
+    command: python main.py --port 18793
+    ports:
+      - "18793:18793"
+
+  # ── 2. Drop Summarizer  (port 18794) ─────────────────────────
+  drop_summarizer:
+    <<: *app-defaults
+    working_dir: /app/apps/drop_summarizer
+    command: python main.py --port 18794
+    ports:
+      - "18794:18794"
+    volumes:
+      # Persist the inbox and processed folders across restarts
+      - drop_summarizer_data:/app/apps/drop_summarizer/inbox
+
+  # ── 3. Web Researcher  (port 18798) ──────────────────────────
+  web_researcher:
+    <<: *app-defaults
+    working_dir: /app/apps/web_researcher
+    command: python main.py --port 18798
+    ports:
+      - "18798:18798"
+
+  # ── 4. Voice Journal  (port 18799) ───────────────────────────
+  voice_journal:
+    <<: *app-defaults
+    working_dir: /app/apps/voice_journal
+    command: python main.py --port 18799
+    ports:
+      - "18799:18799"
+    volumes:
+      - voice_journal_data:/app/apps/voice_journal
+
+  # ── 5. Smart Todo  (port 18800) ──────────────────────────────
+  smart_todo:
+    <<: *app-defaults
+    working_dir: /app/apps/smart_todo
+    command: python main.py --port 18800
+    ports:
+      - "18800:18800"
+    volumes:
+      - smart_todo_data:/app/apps/smart_todo
+
+  # ── 6. Server Monitor  (port 8767) ───────────────────────────
+  server_monitor:
+    <<: *app-defaults
+    working_dir: /app/apps/server_monitor
+    command: python main.py --port 8767
+    ports:
+      - "8767:8767"
+
+  # ── 7. Stock Alert  (port 18801) ─────────────────────────────
+  stock_alert:
+    <<: *app-defaults
+    working_dir: /app/apps/stock_alert
+    command: python main.py --port 18801
+    ports:
+      - "18801:18801"
+
+  # ── 8. Video Q&A  (port 8766) ────────────────────────────────
+  video_qa:
+    <<: *app-defaults
+    working_dir: /app/apps/video_qa
+    command: python run.py --web --port 8766
+    ports:
+      - "8766:8766"
+    volumes:
+      # Mount a local folder so you can pass video file paths to the UI
+      - ./videos:/videos:ro
+
+  # ── 9. Travel Planner  (port 8090) ───────────────────────────
+  travel_planner:
+    <<: *app-defaults
+    working_dir: /app/apps/travel_planner
+    # travel_planner reads PORT from env; main.py is also the uvicorn entrypoint
+    command: python main.py
+    environment:
+      PORT: "8090"
+    ports:
+      - "8090:8090"
+
+  # ── 10. DeckForge  (port 18802) ──────────────────────────────
+  deck_forge:
+    <<: *app-defaults
+    working_dir: /app/apps/deck_forge
+    command: python main.py --port 18802
+    ports:
+      - "18802:18802"
+    volumes:
+      - deck_forge_outputs:/app/apps/deck_forge/outputs
+
+  # ── 11. YouTube Research  (port 18803) ───────────────────────
+  youtube_research:
+    <<: *app-defaults
+    working_dir: /app/apps/youtube_research
+    command: python main.py --port 18803
+    ports:
+      - "18803:18803"
+
+  # ── 12. Architecture Diagram Generator  (port 18804) ─────────
+  arch_diagram:
+    <<: *app-defaults
+    working_dir: /app/apps/arch_diagram
+    command: python main.py --port 18804
+    ports:
+      - "18804:18804"
+
+  # ── 13. Hiking Research  (port 18805) ────────────────────────
+  hiking_research:
+    <<: *app-defaults
+    working_dir: /app/apps/hiking_research
+    command: python main.py --port 18805
+    ports:
+      - "18805:18805"
+
+# ── Named volumes for persistent app state ──────────────────────
+volumes:
+  drop_summarizer_data:
+  voice_journal_data:
+  smart_todo_data:
+  deck_forge_outputs:

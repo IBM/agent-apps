@@ -15,6 +15,7 @@ import DeliverablesPage from './pages/DeliverablesPage'
 import ArchitecturesPage from './pages/ArchitecturesPage'
 import BuildingBlocksPage from './pages/BuildingBlocksPage'
 import ExamplesPage from './pages/ExamplesPage'
+import UseCaseIdeasPage from './pages/UseCaseIdeasPage'
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/architectures" element={<ArchitecturesPage />} />
         <Route path="/building-blocks" element={<BuildingBlocksPage />} />
         <Route path="/examples" element={<ExamplesPage />} />
+        <Route path="/use-case-ideas" element={<UseCaseIdeasPage />} />
       </Routes>
     </Layout>
   )

@@ -1,32 +1,24 @@
 import { NavLink, useLocation } from 'react-router-dom'
+import { useTheme } from '../hooks/useTheme'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Use Cases', icon: '⚡' },
-  { to: '/coverage', label: 'Coverage', icon: '📊' },
-  { to: '/features', label: 'Features', icon: '🧩' },
-  { to: '/vs-openclaw', label: 'vs OpenClaw', icon: '⚖️' },
-  { to: '/manus', label: 'Manus Mapping', icon: '🗺️' },
-  { to: '/vision', label: 'Vision', icon: '🔭' },
-  { to: '/moat', label: 'Positioning', icon: '🎯' },
-  { to: '/proposal', label: 'Proposal', icon: '📋' },
-  { to: '/deliverables', label: 'Deliverables', icon: '📦' },
-  { to: '/ideas', label: 'Ideas', icon: '💡' },
-  { to: '/roadmap', label: 'Early Thoughts', icon: '📝' },
-  { to: '/architectures', label: 'Architectures', icon: '🏛️' },
-  { to: '/building-blocks', label: 'Building Blocks', icon: '🧱' },
-  { to: '/examples', label: 'Examples', icon: '▶️' },
+  { to: '/', label: 'Apps', icon: '⚡' },
+  { to: '/coverage', label: 'OpenClaw / Manus', icon: '📊' },
+  { to: '/use-case-ideas', label: 'Use Case Ideas', icon: '🗂️' },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
+  const { theme, toggle } = useTheme()
 
   const pageTitle = (() => {
-    if (location.pathname === '/') return 'Use Cases'
-    if (location.pathname.startsWith('/use-case')) return 'Use Case Detail'
+    if (location.pathname === '/') return 'Apps'
+    if (location.pathname.startsWith('/use-case') && !location.pathname.includes('ideas')) return 'Use Case Detail'
+    if (location.pathname === '/coverage') return 'OpenClaw / Manus'
+    if (location.pathname === '/use-case-ideas') return 'Use Case Ideas'
     if (location.pathname === '/features') return 'Feature Overview'
-    if (location.pathname === '/vs-openclaw') return 'CUGA++ vs OpenClaw'
+    if (location.pathname === '/vs-openclaw') return 'CUGA vs OpenClaw'
     if (location.pathname === '/manus') return 'Manus Use Case Mapping'
-    if (location.pathname === '/coverage') return 'Use Case Coverage'
     if (location.pathname === '/roadmap') return 'Early Thoughts'
     if (location.pathname === '/vision') return 'Strategic Vision'
     if (location.pathname === '/moat') return 'Positioning'
@@ -36,22 +28,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (location.pathname === '/architectures') return 'App Architectures'
     if (location.pathname === '/building-blocks') return 'Building Blocks'
     if (location.pathname === '/examples') return 'Examples'
-    return 'CUGA++'
+    return 'CUGA'
   })()
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950">
+    <div className="flex h-screen overflow-hidden bg-tbg">
       {/* Sidebar */}
-      <aside className="w-60 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
+      <aside className="w-60 flex-shrink-0 bg-tsurf border-r-2 border-tborder flex flex-col shadow-sm">
         {/* Logo */}
-        <div className="px-5 py-5 border-b border-gray-800">
+        <div className="px-5 py-5 border-b-2 border-tborder">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold text-white">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-sm">
               C
             </div>
             <div>
-              <div className="text-white font-semibold text-sm tracking-wide">CUGA++</div>
-              <div className="text-gray-500 text-xs">Event-Driven Agent I/O</div>
+              <div className="text-t1 font-semibold text-sm tracking-wide">CUGA Apps</div>
+              <div className="text-t3 text-xs">Dashboard</div>
             </div>
           </div>
         </div>
@@ -66,8 +58,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? 'bg-indigo-600/20 text-indigo-300 font-medium'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    ? 'bg-indigo-600/10 text-indigo-500 font-medium border border-indigo-500/30'
+                    : 'text-t3 hover:text-t1 hover:bg-tsurf2'
                 }`
               }
             >
@@ -77,20 +69,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
+        {/* Theme toggle */}
+        <div className="px-4 py-3 border-t-2 border-tborder">
+          <button
+            onClick={toggle}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-tsurf2 border border-tborder text-xs text-t2 hover:text-t1 hover:border-t3 transition-colors"
+          >
+            <span>{theme === 'warm' ? '☀️ Warm' : '🌙 Dark'}</span>
+            <span className="text-t4">switch</span>
+          </button>
+        </div>
+
         {/* Footer */}
-        <div className="px-4 py-4 border-t border-gray-800">
-          <div className="text-xs text-gray-600">
-            <div className="font-mono">53/82 use cases</div>
-            <div className="mt-0.5">Sprint 3 complete</div>
-          </div>
+        <div className="px-4 py-3 border-t-2 border-tborder">
+          <div className="text-xs text-t4 font-mono">53/82 use cases</div>
+          <div className="text-xs text-t4 mt-0.5">Sprint 3 complete</div>
         </div>
       </aside>
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="h-12 flex-shrink-0 bg-gray-900/50 border-b border-gray-800 flex items-center px-6">
-          <h1 className="text-sm font-medium text-gray-300">{pageTitle}</h1>
+        <header className="h-12 flex-shrink-0 bg-tsurf border-b-2 border-tborder flex items-center px-6 shadow-sm">
+          <h1 className="text-sm font-medium text-t2">{pageTitle}</h1>
         </header>
 
         {/* Content */}

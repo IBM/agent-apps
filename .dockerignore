@@ -1,0 +1,38 @@
+# Root .dockerignore — applies to the Dockerfile.apps build context
+
+# Python environments and caches
+apps/.venv/
+apps/__pycache__/
+apps/**/__pycache__/
+apps/**/*.pyc
+apps/**/*.pyo
+**/*.egg-info/
+
+# Runtime state / logs (apps create these at runtime, not build time)
+apps/.launch_pids
+apps/.*.log
+apps/**/.store.json
+apps/**/.cuga/
+apps/**/inbox/
+apps/**/outputs/
+
+# Source control
+.git/
+.github/
+
+# Editor / OS
+.DS_Store
+**/.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# UI build artifacts (not needed by apps image)
+ui/
+
+# Docs / misc
+*.md
+use_cases_*.md
+usecases_*.md
+sample.py
+test_sample.py

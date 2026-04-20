@@ -755,6 +755,69 @@ CugaAgent → updated diagram with cache node added`,
     ],
     appUrl: 'http://localhost:18804',
   },
+  {
+    id: 'hiking-research',
+    name: 'Hiking Research',
+    tagline: 'Discover and compare hiking trails near any location with AI-synthesised reviews',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A browser UI for exploring hiking trails. Type any location and the agent geocodes it, queries OpenStreetMap via the Overpass API for named hiking route relations, and presents trails filtered by difficulty and kid-friendliness. Click any trail name to view it on OpenStreetMap. Tap "Get Reviews" on any trail to get an AI-synthesised summary of hiker reviews from the web via Tavily.',
+    category: 'content',
+    status: 'working',
+    channels: [],
+    tools: ['geocode_location()', 'find_hikes()', 'get_review_summary()'],
+    demoPath: 'apps/hiking_research',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'TAVILY_API_KEY (optional, for reviews)'],
+      setup: [
+        'cd apps/hiking_research',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls geocode_location (Nominatim/OpenStreetMap) to convert a place name to lat/lon, then find_hikes (Overpass API) to fetch named hiking route relations, filtered by difficulty and kid-friendliness. GET /hikes returns the cached results for the live trail-card panel. get_review_summary uses Tavily to search for and synthesise hiker reviews for a specific trail.',
+    diagram: `python main.py  →  http://127.0.0.1:18805
+
+User: "Easy hikes near Yosemite, CA"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ geocode_location("Yosemite, CA")
+      │     → lat=37.7489, lon=-119.5885
+      │
+      ├─ find_hikes(lat, lon, radius_km=25, difficulty="easy")
+      │     → Overpass API: hiking route relations
+      │     → filter by sac_scale / distance
+      │     → _last_hikes updated (30 results)
+      ▼
+Summary: "Found 12 easy trails near Yosemite…"
+
+GET /hikes → trail cards rendered in the right panel
+  Each card: name (→ OSM link), difficulty, distance, kid-friendly badge
+
+User: "Tell me about reviews for: Mist Trail"
+      │
+      ▼
+CugaAgent → get_review_summary("Mist Trail", "Yosemite")
+          → Tavily search → synthesised review summary`,
+    cugaContribution: [
+      'Agent chains geocode → find_hikes automatically — user just names any place, no coordinates needed',
+      'Difficulty inferred from OSM sac_scale tag with a distance-based fallback for untagged routes',
+      'Kid-friendly flag combines difficulty, distance, and an explicit OSM child= tag',
+      'Review synthesis via Tavily search gives real hiker opinions without fabricating trail details',
+    ],
+    examples: [
+      'Easy hikes near Yosemite, CA',
+      'Kid-friendly trails near Boulder, CO',
+      'Moderate hikes near Asheville, NC within 40 km',
+      'Hard hikes near Denver, CO',
+      'Family hikes near Lake Tahoe',
+      'Tell me about user reviews for: Half Dome Trail',
+    ],
+    appUrl: 'http://localhost:18805',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {

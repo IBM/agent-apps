@@ -1,0 +1,6 @@
+# ui/.dockerignore — applies to the ui/Dockerfile build context
+node_modules/
+dist/
+.vite/
+*.local
+.DS_Store

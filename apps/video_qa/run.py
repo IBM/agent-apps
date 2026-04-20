@@ -72,16 +72,23 @@ async def _cli(
         if not path.exists():
             print(f"Error: file not found: {path}", file=sys.stderr)
             sys.exit(1)
-
         print(f"\nVideo: {path.name}")
-        print("Transcribing… (cached on disk after first run)")
-        info = await agent.transcribe(str(path))
-        print(f"Done — {info['segments_count']} segments, duration {info['duration_fmt']}\n")
     else:
         print("\nNo video specified. You can still load one during the session.")
 
+    if video_path:
+        # Pre-warm the Whisper cache before the agent runs — Whisper takes
+        # minutes, which exceeds the agent's 30s code-executor timeout.
+        # The agent's transcribe_video tool then just loads from disk cache
+        # and indexes into ChromaDB, completing in seconds.
+        import transcriber as tr
+        print("Transcribing… (cached on disk after first run)")
+        tr.transcribe(str(path), model_size=whisper_model)
+        print("Ready. Handing off to agent.\n")
+
     if question:
-        print(await agent.ask(question))
+        full_q = f"Transcribe {path} then answer: {question}" if video_path else question
+        print(await agent.ask(full_q))
         return
 
     print("Ask anything about the video. Type 'exit' to quit.\n")
@@ -106,8 +113,9 @@ async def _cli(
 
         if q.lower().startswith("load "):
             new_path = q[5:].strip().strip('"').strip("'")
-            info = await agent.transcribe(new_path)
-            print(f"Loaded — {info['segments_count']} segments, {info['duration_fmt']}\n")
+            import transcriber as tr
+            segs = tr.transcribe(new_path, model_size=whisper_model)
+            print(f"Loaded — {len(segs)} segments, {tr.fmt_time(segs[-1]['end']) if segs else '0:00'}\n")
             continue
 
         print()
@@ -127,7 +135,6 @@ try:
     class LoadReq(_BaseModel):
         video_path: str
         whisper_model: str = "base"
-        force: bool = False
 
     class AskReq(_BaseModel):
         question: str
@@ -151,7 +158,10 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
     @app.post("/load")
     async def load(req: LoadReq):
         try:
-            return await _agent.transcribe(req.video_path, force=req.force)
+            import transcriber as tr
+            segments = tr.transcribe(req.video_path, model_size=req.whisper_model)
+            duration = segments[-1]["end"] if segments else 0
+            return {"segments_count": len(segments), "duration_fmt": tr.fmt_time(duration), "video_path": req.video_path}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -194,7 +204,7 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
         return _WEB_HTML
 
     print(f"\n  Video Q&A · CugaAgent  →  http://127.0.0.1:{port}\n")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 _WEB_HTML = """<!DOCTYPE html>

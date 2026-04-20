@@ -1,8 +1,9 @@
 """
 VideoQAAgent — CugaAgent-backed video Q&A with timestamps.
 
-Exposes three tools to CugaAgent:
-  transcribe_video    — run Whisper on a file, index segments in ChromaDB
+Transcription is done explicitly via VideoQAAgent.transcribe() before Q&A —
+it runs Whisper locally and can take minutes, which exceeds the agent's
+code-executor timeout. The agent only gets the two fast tools:
   search_transcript   — semantic search → returns segments with timestamps
   get_segment_at_time — what was said at a specific second?
 
@@ -17,7 +18,6 @@ Usage
 """
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -37,7 +37,6 @@ You are a video Q&A assistant. You answer questions about the content of a trans
 
 | Tool | When to use |
 |---|---|
-| `transcribe_video` | When the user provides a video/audio file path that hasn't been indexed yet |
 | `search_transcript` | For any content question — retrieves relevant segments with timestamps |
 | `get_segment_at_time` | When the user asks what was said at a specific time |
 
@@ -87,41 +86,43 @@ for _p in [str(_EXAMPLE_DIR), str(_DEMOS_DIR)]:
 
 def _make_tools(video_path_ref: dict):
     """
-    Build the three tools. video_path_ref["path"] is set after transcription
-    so the search tools always operate on the right file.
+    Build the three tools. transcribe_video is fast because run.py pre-warms
+    the Whisper cache before invoking the agent — the tool just loads from
+    disk and indexes into ChromaDB, which completes within the 30s executor
+    timeout. The slow Whisper work never runs inside the agent.
     """
     from langchain_core.tools import tool
     import transcriber as tr
     import index as idx
 
     @tool
-    def transcribe_video(video_path: str, model_size: str = "base") -> str:
+    def transcribe_video(video_path: str, model_size: str = "base") -> dict:
         """
-        Transcribe a video or audio file and index it for Q&A.
+        Load a pre-transcribed video into the Q&A index.
 
-        Extracts audio with ffmpeg (video files), runs Whisper, stores segments
-        in ChromaDB. Cached on disk — same file is never re-transcribed.
+        The Whisper transcription is cached on disk. This tool loads that
+        cache and indexes the segments for search — it completes in seconds.
 
         Args:
-            video_path: Absolute or relative path to the video/audio file.
-            model_size: Whisper model size — tiny | base | small | medium | large-v3.
+            video_path: Absolute path to the video/audio file.
+            model_size: Whisper model size used during transcription.
 
         Returns:
-            JSON with segments_count and duration_fmt.
+            Dict with segments_count, duration_fmt, video_path.
         """
         segments = tr.transcribe(video_path, model_size=model_size)
         idx.index_segments(video_path, segments)
         video_path_ref["path"]     = video_path
         video_path_ref["segments"] = segments
         duration = segments[-1]["end"] if segments else 0
-        return json.dumps({
+        return {
             "segments_count": len(segments),
             "duration_fmt":   tr.fmt_time(duration),
             "video_path":     video_path,
-        })
+        }
 
     @tool
-    def search_transcript(query: str, n_results: int = 6) -> str:
+    def search_transcript(query: str, n_results: int = 6) -> list | dict:
         """
         Semantic search over the indexed transcript.
 
@@ -130,16 +131,15 @@ def _make_tools(video_path_ref: dict):
             n_results: Max number of segments to return (default 6).
 
         Returns:
-            JSON array of matching segments with text, start_fmt, end_fmt, distance.
+            List of matching segments with text, start_fmt, end_fmt, distance.
         """
         path = video_path_ref.get("path")
         if not path:
-            return json.dumps({"error": "No video indexed. Call transcribe_video first."})
-        hits = idx.search(path, query, n_results=n_results)
-        return json.dumps(hits)
+            return {"error": "No video indexed. Call agent.transcribe() first."}
+        return idx.search(path, query, n_results=n_results)
 
     @tool
-    def get_segment_at_time(seconds: float) -> str:
+    def get_segment_at_time(seconds: float) -> dict:
         """
         Return the transcript segment that covers a given timestamp.
 
@@ -147,14 +147,14 @@ def _make_tools(video_path_ref: dict):
             seconds: Time offset in seconds from the start of the video.
 
         Returns:
-            JSON with text, start_fmt, end_fmt for that moment.
+            Dict with text, start_fmt, end_fmt for that moment.
         """
         segments = video_path_ref.get("segments", [])
         if not segments:
-            return json.dumps({"error": "No transcript loaded. Call transcribe_video first."})
+            return {"error": "No transcript loaded. Call agent.transcribe() first."}
         import index as idx
         seg = idx.get_at_time(video_path_ref.get("path", ""), seconds, segments)
-        return json.dumps(seg) if seg else json.dumps({"error": "No segment found."})
+        return seg if seg else {"error": "No segment found."}
 
     return [transcribe_video, search_transcript, get_segment_at_time]
 
@@ -217,33 +217,6 @@ class VideoQAAgent:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    async def transcribe(self, video_path: str, force: bool = False) -> dict:
-        """
-        Transcribe and index a video file.
-
-        Args:
-            video_path: Path to the video/audio file.
-            force:      Re-index even if already cached.
-
-        Returns:
-            {"segments_count": N, "duration_fmt": "MM:SS", "video_path": "..."}
-        """
-        import transcriber as tr
-        import index as idx
-
-        segments = tr.transcribe(video_path, model_size=self._whisper_model)
-        idx.index_segments(video_path, segments, force=force)
-
-        self._video_path_ref["path"]     = video_path
-        self._video_path_ref["segments"] = segments
-
-        duration = segments[-1]["end"] if segments else 0
-        return {
-            "segments_count": len(segments),
-            "duration_fmt":   tr.fmt_time(duration),
-            "video_path":     video_path,
-        }
 
     async def ask(self, question: str, thread_id: str = "video-qa") -> str:
         """

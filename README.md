@@ -32,30 +32,19 @@ npm run preview    # preview the build locally
 
 CUGA can be easily integrated into your Python applications as a library. The SDK provides a clean, minimal API for creating and invoking agents with custom tools.
 
-### Installation
 
-CUGA must be installed before use:
-```bash
-pip install -r requirements.txt"
-```
 
-OR
-
-```bash
-pip install git+ssh://git@github.com/cuga-project/cuga-agent.git@main
-```
-
-> Requires Python >=3.10, <3.14
-
-📚 **SDK Documentation**: [SDK Documentation](https://docs.cuga.dev/docs/sdk/cuga_agent/)
-
-## Set up applications
+## Set up CUGA and demo applications
 
 ```bash
 python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt          # installs cuga
-pip install -r apps/<app-name>/requirements.txt
+pip install -r apps/<app-name>/requirements.txt # one app at a time
+
+or
+
+pip install -r requirements.app.txt # all apps
 ```
 
 ---

@@ -1,0 +1,49 @@
+# ============================================================
+# Consolidated requirements for all 10 cuga-apps demo apps.
+# Install with SSH agent forwarding (see Dockerfile.apps):
+#   pip install --no-cache-dir -r requirements.apps.txt
+# ============================================================
+
+# ── cuga framework (private repo, requires SSH) ──────────────
+git+ssh://git@github.com/cuga-project/cuga-agent.git@main
+
+# ── Web framework ─────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# ── LangChain providers ───────────────────────────────────────
+langchain-core
+langchain-anthropic
+langchain-openai
+langchain-ibm
+langchain-ollama
+langchain-community
+langgraph
+httpx
+python-dotenv
+
+# ── newsletter ────────────────────────────────────────────────
+feedparser
+
+# ── drop_summarizer ───────────────────────────────────────────
+docling
+
+# ── web_researcher & travel_planner ──────────────────────────
+tavily-python
+requests
+
+# ── server_monitor ───────────────────────────────────────────
+psutil
+
+# ── video_qa / voice_journal / deck_forge ────────────────────
+faster-whisper
+chromadb
+sentence-transformers
+
+# ── deck_forge ────────────────────────────────────────────────
+python-pptx
+
+# ── stock_alert ───────────────────────────────────────────────
+# (uses requests, already listed above)
