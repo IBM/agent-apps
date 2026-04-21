@@ -26,7 +26,7 @@ npm install        # first time only
 npm run dev
 ```
 
-Open **http://localhost:3000**
+Open **http://localhost:5173**
 <img width="1071" height="684" alt="image" src="https://github.com/user-attachments/assets/a84a7faf-fc68-4877-81d3-d4eebf98294d" />
 
 ### Build for static hosting
