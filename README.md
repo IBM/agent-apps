@@ -1,5 +1,11 @@
 # cuga-apps
 
+## Running with Docker / Podman
+
+See **[docs/docker.md](docs/docker.md)** for the full guide: building the image, tuning VM memory, starting and stopping, viewing logs, and troubleshooting common errors.
+
+---
+
 ## Contributing a new app
 
 See [app_contribution_guidelines.md](app_contribution_guidelines.md) for the full checklist: picking a port, directory layout, registering in `launch.py`, updating `requirements.apps.txt`, adding a UI card, and updating this README.

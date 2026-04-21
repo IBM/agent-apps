@@ -27,4 +27,7 @@ RUN pip install --no-cache-dir -r requirements.apps.txt
 # Copy the full apps directory (shared helpers _llm.py, _image_utils.py + all app dirs)
 COPY apps/ ./apps/
 
-# No default CMD — each service in docker-compose overrides this
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]

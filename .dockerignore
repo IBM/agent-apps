@@ -1,11 +1,12 @@
 # Root .dockerignore — applies to the Dockerfile.apps build context
 
 # Python environments and caches
+.venv/
 apps/.venv/
-apps/__pycache__/
-apps/**/__pycache__/
-apps/**/*.pyc
-apps/**/*.pyo
+apps/**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
 **/*.egg-info/
 
 # Runtime state / logs (apps create these at runtime, not build time)
