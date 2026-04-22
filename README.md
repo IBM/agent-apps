@@ -1,10 +1,10 @@
 # cuga-apps
 
-A collection of 16 AI agent demos built with [CUGA](https://github.com/anupamamurthi/cuga). Each app is a standalone FastAPI server with a browser UI. All apps run together via Docker — one command gets everything up.
+A collection of 18 AI agent demos built with [CUGA](https://github.com/anupamamurthi/cuga). Each app is a standalone FastAPI server with a browser UI. All apps run together via Docker — one command gets everything up.
 
 ## Quickstart with Docker
 
-The fastest way to run all 16 demos:
+The fastest way to run all 18 demos:
 
 ```bash
 git clone <repo-url>
@@ -20,7 +20,7 @@ docker compose up -d
 
 Open **http://localhost:3000** — the app gallery loads with a "Try it now" button for each demo.
 
-> **Podman users:** the default VM memory (8 GB) is not enough for 16 concurrent Python processes. Bump it to 12 GB before building:
+> **Podman users:** the default VM memory (8 GB) is not enough for 18 concurrent Python processes. Bump it to 12 GB before building:
 > ```bash
 > podman machine stop
 > podman machine set --memory 12288
@@ -164,6 +164,8 @@ docker compose logs apps | grep "18804"   # arch_diagram
 | movie_recommender | 18806 | http://localhost:18806 |
 | webpage_summarizer | 8071 | http://localhost:8071 |
 | code_reviewer | 18807 | http://localhost:18807 |
+| paper_scout | 18808 | http://localhost:18808 |
+| wiki_dive | 18809 | http://localhost:18809 |
 
 ### .env file
 

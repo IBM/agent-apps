@@ -88,6 +88,10 @@ APPS: list[dict] = [
     dict(name="movie_recommender",  dir="movie_recommender",  default_port=18806, cmd=_python_cmd()),
     dict(name="webpage_summarizer", dir="webpage_summarizer", default_port=8071,  cmd=_python_cmd()),
     dict(name="code_reviewer",      dir="code_reviewer",      default_port=18807, cmd=_python_cmd()),
+    dict(name="paper_scout",        dir="paper_scout",        default_port=18808, cmd=_python_cmd()),
+    dict(name="wiki_dive",          dir="wiki_dive",          default_port=18809, cmd=_python_cmd()),
+    dict(name="ibm_cloud_advisor",  dir="ibm_cloud_advisor",  default_port=18812, cmd=_python_cmd()),
+    dict(name="ibm_docs_qa",        dir="ibm_docs_qa",        default_port=18813, cmd=_python_cmd()),
     # ── To add a new app, copy one line above and adjust the fields ──────────
 ]
 

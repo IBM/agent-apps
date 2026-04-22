@@ -56,5 +56,17 @@ python webpage_summarizer/main.py --port 8071 &
 log "Starting code_reviewer      on :18807"
 python code_reviewer/main.py --port 18807 &
 
+log "Starting paper_scout        on :18808"
+python paper_scout/main.py --port 18808 &
+
+log "Starting wiki_dive          on :18809"
+python wiki_dive/main.py --port 18809 &
+
+log "Starting ibm_cloud_advisor  on :18812"
+python ibm_cloud_advisor/main.py --port 18812 &
+
+log "Starting ibm_docs_qa        on :18813"
+python ibm_docs_qa/main.py --port 18813 &
+
 log "All apps launched. Waiting..."
 wait

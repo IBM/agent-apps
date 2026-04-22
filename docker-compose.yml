@@ -47,6 +47,10 @@ services:
       - "18806:18806"   # movie_recommender
       - "8071:8071"     # webpage_summarizer
       - "18807:18807"   # code_reviewer
+      - "18808:18808"   # paper_scout
+      - "18809:18809"   # wiki_dive
+      - "18812:18812"   # ibm_cloud_advisor
+      - "18813:18813"   # ibm_docs_qa
     environment:
       # LLM provider
       - LLM_PROVIDER

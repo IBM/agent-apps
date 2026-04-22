@@ -1045,6 +1045,310 @@ CugaAgent (code injected as context) → refactoring walkthrough`,
     ],
     appUrl: 'http://localhost:18807',
   },
+  {
+    id: 'paper-scout',
+    name: 'Paper Scout',
+    tagline: 'Research academic papers via arXiv and Semantic Scholar — no API key needed',
+    description:
+      'A browser UI for academic research. Type a topic and the agent searches both arXiv (CS, ML, physics, math, biology) and Semantic Scholar (broader coverage with citation counts), then synthesises findings across papers with inline citations. Paste an arXiv ID or URL directly for an instant structured summary: contributions, method, results, limitations. Ask follow-up questions like "what does this build on?" to fetch reference lists.',
+    category: 'productivity',
+    type: 'other',
+    surface: 'gateway',
+    status: 'working',
+    channels: [],
+    tools: ['search_arxiv', 'get_arxiv_paper', 'search_semantic_scholar', 'get_paper_references'],
+    demoPath: 'apps/paper_scout',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG'],
+      setup: [
+        'cd apps/paper_scout',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18808',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls search_arxiv and search_semantic_scholar in parallel, deduplicates results, then synthesises a structured report grouped by theme with inline citations (title, URL, citation count, year). For direct arXiv IDs, get_arxiv_paper is called immediately. get_paper_references fetches the Semantic Scholar reference graph for any paper. No API keys required — arXiv and Semantic Scholar both offer free public APIs.',
+    diagram: `python main.py  →  http://127.0.0.1:18808
+
+Mode 1 — Topic research:
+User: "LoRA and parameter-efficient fine-tuning"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ search_arxiv("LoRA fine-tuning", category="cs.LG")
+      │     → [2106.09685, 2305.14314, 2402.09353, …]
+      ├─ search_semantic_scholar("parameter-efficient fine-tuning")
+      │     → [papers with citation counts]
+      ▼
+Synthesised report:
+  **Topic**: LoRA and Parameter-Efficient Fine-Tuning
+  **Papers found**: 8 (5 arXiv, 3 Semantic Scholar)
+  **Synthesis**: LoRA (Hu et al., 2021) introduces low-rank decomposition…
+  **Key papers to read first**: …
+
+Mode 2 — Direct arXiv ID:
+User: "arxiv 2305.11206"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ get_arxiv_paper("2305.11206")
+      ▼
+  **Paper**: [Title](url)
+  **Summary** / **Method** / **Key results** / **Limitations**`,
+    cugaContribution: [
+      'Searches arXiv and Semantic Scholar independently then deduplicates — same paper cited once, never twice',
+      'Category filter on arXiv (cs.AI, cs.LG, stat.ML, etc.) lets users narrow to a field without knowing exact terminology',
+      'Citation counts from Semantic Scholar ground the synthesis in impact, not just recency',
+      'get_paper_references follows the citation graph to surface the foundational papers a new work builds on',
+    ],
+    examples: [
+      "LoRA and parameter-efficient fine-tuning methods",
+      "Mixture of Experts in large language models",
+      "Retrieval-Augmented Generation for knowledge-intensive NLP",
+      "https://arxiv.org/abs/1706.03762",
+      "2310.01445",
+      "What papers does Attention Is All You Need build on?",
+    ],
+    appUrl: 'http://localhost:18808',
+  },
+  {
+    id: 'wiki-dive',
+    name: 'Wiki Dive',
+    tagline: 'Deep Wikipedia research — reads articles section by section, follows related links, synthesises with citations',
+    description:
+      'A browser UI for encyclopedic deep dives. Unlike a Wikipedia search that returns a snippet, Wiki Dive reads the full article section by section, follows "See Also" links to pull connected concepts, and synthesises a structured report with inline citations. Great for building mental models from first principles — complex topics, historical events, scientific concepts, philosophical ideas. No API keys required; uses Wikipedia\'s free public REST and action APIs.',
+    category: 'productivity',
+    type: 'other',
+    surface: 'gateway',
+    status: 'working',
+    channels: [],
+    tools: ['search_wikipedia', 'get_article_summary', 'get_article_sections', 'get_related_articles'],
+    demoPath: 'apps/wiki_dive',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG'],
+      setup: [
+        'cd apps/wiki_dive',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18809',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls search_wikipedia to identify relevant articles, get_article_summary for a quick relevance check, get_article_sections for deep section-by-section reading of the primary article, get_related_articles to discover connected concepts, then get_article_summary on 2-3 related articles for breadth. The agent synthesises across all content into a structured report. No API keys required — uses Wikipedia\'s free public REST API and MediaWiki action API.',
+    diagram: `python main.py  →  http://127.0.0.1:18809
+
+User: "How does transformer attention work?"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ search_wikipedia("transformer attention mechanism")
+      │     → ["Transformer (deep learning)", "Attention (machine learning)", …]
+      ├─ get_article_summary("Transformer (deep learning)")
+      │     → lead paragraph confirming relevance
+      ├─ get_article_sections("Transformer (deep learning)")
+      │     → Introduction / Architecture / Attention / Training / Applications / …
+      ├─ get_related_articles("Transformer (deep learning)")
+      │     → ["BERT", "GPT", "Self-attention", "Seq2seq", …]
+      ├─ get_article_summary("Attention (machine learning)")
+      │     → historical context: Bahdanau 2014, Vaswani 2017
+      ▼
+Synthesised report:
+  **Overview**: Transformers use self-attention to…
+  **Key concepts**: Query/Key/Value matrices, Multi-head attention, Positional encoding
+  **History**: Bahdanau (2014) introduced attention for NMT…
+  **Related topics**: BERT, GPT, Vision Transformer`,
+    cugaContribution: [
+      'get_article_sections reads every section of the article — not just the lead — giving the agent encyclopedic depth instead of snippet-level knowledge',
+      'get_related_articles surfaces the Wikipedia editor-curated "See Also" graph, pulling in adjacent concepts the user may not have known to ask for',
+      'Multi-article synthesis: agent reads 3-5 articles and synthesises across them, resolving overlaps and connecting ideas',
+      'Output is structured (Overview → Key concepts → History → Applications → Related topics) rather than raw article text',
+    ],
+    examples: [
+      "How does transformer attention work?",
+      "The French Revolution — causes, events, and legacy",
+      "Quantum entanglement explained from first principles",
+      "CRISPR gene editing and its applications",
+      "Game theory and Nash equilibrium",
+      "The philosophy of consciousness and the hard problem",
+    ],
+    appUrl: 'http://localhost:18809',
+  },
+  {
+    id: 'box-qa',
+    name: 'Box Document Q&A',
+    tagline: 'Ask questions across documents stored in your Box cloud storage',
+    type: 'documents',
+    surface: 'gateway',
+    description:
+      'A browser UI that connects to a Box folder and lets you ask natural-language questions across your documents. The agent lists files, fetches and extracts text from supported document types (PDF, DOCX, PPTX, XLSX, TXT, MD, CSV), and answers questions with citations to specific files and passages. Video/audio files are surfaced by name but noted as unsupported — a multimodal extension (Whisper transcription + keyframe vision) is planned for v2.',
+    category: 'documents',
+    status: 'working',
+    channels: [],
+    tools: ['list_box_folder()', 'get_file_content()', 'search_box()'],
+    demoPath: 'apps/box_qa',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'BOX_CONFIG_PATH', 'BOX_FOLDER_ID'],
+      setup: [
+        'cd apps/box_qa',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent uses list_box_folder (Box SDK JWT auth) to enumerate files, search_box to find relevant candidates, get_file_content to download and extract text (plain read for TXT/CSV/MD; docling OCR for PDF/DOCX/PPTX/XLSX) → answers with file citations. Two-panel UI: left is conversational chat (thread-aware, multi-turn), right shows the latest agent response in full.',
+    diagram: `python main.py  →  http://127.0.0.1:18810
+
+User: "What does the Q4 report say about revenue?"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ list_box_folder("0") → sees Q4_Report.pdf, budget.xlsx, intro.mp4
+      ├─ get_file_content(id=Q4_Report.pdf)
+      │     → docling extracts text
+      │     → intro.mp4 skipped ("video/audio not supported")
+      ▼
+Answer with citation:
+"[Q4_Report.pdf] — 'Revenue grew 18% YoY, driven by…'"`,
+    cugaContribution: [
+      'Agent decides which files are relevant before fetching — avoids downloading the entire folder',
+      'Cross-document synthesis: "Both the Q4 report and the board brief mention X"',
+      'Multi-turn thread memory: follow-up questions work without re-fetching already-read files',
+      'Graceful handling of unsupported types: media files are surfaced but not silently skipped',
+    ],
+    examples: [
+      'What files are in my Box folder?',
+      'Summarize the most recent PDF',
+      'Find any documents about contracts and list key terms',
+      'What does the project brief say about timelines?',
+      'Compare the two most recent reports',
+      'List all files — which ones can you read?',
+    ],
+    appUrl: 'http://localhost:18810',
+  },
+  {
+    id: 'ibm-cloud-advisor',
+    name: 'IBM Cloud Architecture Advisor',
+    tagline: 'Describe what you want to build — get real IBM Cloud services, CLI commands, and cost hints',
+    description:
+      'A browser UI powered by the IBM Global Catalog public API (no IBM account required). Describe your use case in plain English and the agent searches the live IBM service catalog, recommends 3–7 IBM Cloud services with roles and integration points, and generates ibmcloud CLI commands to provision them. Supports iterative refinement: ask for HA, HIPAA compliance, Terraform output, or AWS-to-IBM mappings.',
+    category: 'infrastructure',
+    type: 'other',
+    surface: 'gateway',
+    status: 'working',
+    channels: [],
+    tools: ['search_ibm_catalog()', 'search_ibm_docs()'],
+    demoPath: 'apps/ibm_cloud_advisor',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TAVILY_API_KEY'],
+      setup: [
+        'cd apps/ibm_cloud_advisor',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18812',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls search_ibm_catalog (IBM Global Catalog public REST API — no key needed) with 2–3 keyword queries to find real services, optionally calls search_ibm_docs (Tavily restricted to ibm.com) for pricing and architecture patterns, then produces a structured recommendation with CLI commands. No state stored between sessions.',
+    diagram: `python main.py  →  http://127.0.0.1:18812
+
+User: "Event-driven microservices with a message queue and a managed database"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ search_ibm_catalog("message queue event streaming")
+      │     → IBM Event Streams, IBM MQ
+      ├─ search_ibm_catalog("managed postgresql database")
+      │     → Databases for PostgreSQL
+      ├─ search_ibm_catalog("serverless container compute")
+      │     → IBM Code Engine
+      ├─ (optional) search_ibm_docs("IBM Event Streams pricing tiers")
+      ▼
+Architecture: Event-Driven Microservices on IBM Cloud
+
+IBM Cloud Services:
+- IBM Event Streams (event-streams): Kafka-compatible message bus
+- Databases for PostgreSQL (databases-for-postgresql): Persistent store
+- IBM Code Engine (codeengine): Serverless consumer microservices
+
+ibmcloud CLI:
+  ibmcloud resource service-instance-create my-kafka event-streams standard us-south`,
+    cugaContribution: [
+      'search_ibm_catalog hits the live IBM Global Catalog API — only real, current services are ever recommended',
+      'Agent runs 2–3 focused queries per use case (one per capability) to maximise catalog hit rate',
+      'search_ibm_docs uses Tavily restricted to ibm.com — pricing tiers, feature comparisons from official sources',
+      'Iterative refinement via conversation thread — "make it HA" or "show Terraform" modifies the previous recommendation in context',
+    ],
+    examples: [
+      'IoT sensor pipeline with real-time processing and dashboards',
+      'Serverless web app with auth and a managed database',
+      'Event-driven microservices with a message queue',
+      'ML model training and serving platform on IBM Cloud',
+      'AWS equivalent: S3 + Lambda + DynamoDB on IBM Cloud',
+      'HIPAA-compliant data processing pipeline',
+      'Show Terraform for a Kubernetes workload on IBM Cloud',
+    ],
+    appUrl: 'http://localhost:18812',
+  },
+  {
+    id: 'ibm-docs-qa',
+    name: 'IBM Docs Q&A',
+    tagline: 'Ask any IBM Cloud question — get a precise answer from real IBM documentation with source links',
+    description:
+      'A browser UI that answers IBM Cloud questions by searching and reading real IBM documentation. Ask anything: setup procedures, plan limits, service comparisons, config options, pricing. The agent searches ibm.com and cloud.ibm.com via Tavily, fetches the most relevant doc pages in full, and synthesises a precise answer with inline citations. Multi-turn: ask follow-up questions without re-submitting context.',
+    category: 'infrastructure',
+    type: 'other',
+    surface: 'gateway',
+    status: 'working',
+    channels: [],
+    tools: ['search_ibm_docs()', 'fetch_doc_page()'],
+    demoPath: 'apps/ibm_docs_qa',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TAVILY_API_KEY'],
+      setup: [
+        'cd apps/ibm_docs_qa',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18813',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls search_ibm_docs (Tavily restricted to ibm.com/cloud.ibm.com, search_depth=advanced) to find relevant pages, then optionally calls fetch_doc_page (httpx + BeautifulSoup, strips nav/header/footer, extracts main content up to 6000 chars) on the most relevant URL. Agent synthesises across sources and cites every claim with a page title and URL.',
+    diagram: `python main.py  →  http://127.0.0.1:18813
+
+User: "How do I set up a private endpoint for Cloud Object Storage?"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ search_ibm_docs("IBM Cloud Object Storage private endpoint setup")
+      │     → Tavily → 6 results from cloud.ibm.com/docs
+      │
+      ├─ fetch_doc_page("https://cloud.ibm.com/docs/cloud-object-storage?topic=…")
+      │     → httpx GET → BeautifulSoup strip → 4800 chars of clean doc text
+      ▼
+Answer:
+  1. Create a service credential with HMAC enabled
+  2. Use private endpoint: s3.private.<region>.cloud-object-storage.appdomain.cloud
+  3. Ensure your compute is in the same region VPC
+
+  Sources:
+  - [Cloud Object Storage Endpoints](https://cloud.ibm.com/docs/…)
+
+User: "What's the difference between private and direct endpoints?"
+      ▼
+CugaAgent (previous context retained) → follow-up with comparison table`,
+    cugaContribution: [
+      'search_ibm_docs uses Tavily advanced mode with ibm.com domain restriction — results always from official IBM sources',
+      'fetch_doc_page strips nav, header, footer, and scripts before the LLM sees text — agent reads clean content, not HTML noise',
+      'URL safety check refuses non-IBM URLs — agent cannot be redirected off-domain',
+      'Multi-turn conversation thread — follow-up questions work without re-submitting context',
+    ],
+    examples: [
+      'How do I set up a private endpoint for Cloud Object Storage?',
+      'What are the Lite plan limits for Watson Discovery?',
+      'How does IBM Cloud IAM service ID authentication work?',
+      'Code Engine: Dockerfile vs Buildpacks — which should I use?',
+      'How do I connect IBM Databases for PostgreSQL to Code Engine?',
+      'What is IBM watsonx.ai and how do I get started?',
+    ],
+    appUrl: 'http://localhost:18813',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {

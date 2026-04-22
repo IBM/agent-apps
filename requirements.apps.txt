@@ -1,5 +1,5 @@
 # ============================================================
-# Consolidated requirements for all 10 cuga-apps demo apps.
+# Consolidated requirements for all 18 cuga-apps demo apps.
 # Install with SSH agent forwarding (see Dockerfile.apps):
 #   pip install --no-cache-dir -r requirements.apps.txt
 # ============================================================
@@ -53,6 +53,13 @@ youtube-transcript-api
 
 # ── webpage_summarizer ────────────────────────────────────────
 beautifulsoup4
+
+# ── box_qa ────────────────────────────────────────────────────
+boxsdk[jwt]
+
+# ── paper_scout — no new deps (uses httpx, already listed above) ─────────────
+
+# ── wiki_dive — no new deps (uses httpx, already listed above) ───────────────
 
 # ── observability ─────────────────────────────────────────────
 openlit
