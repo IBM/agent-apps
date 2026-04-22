@@ -189,7 +189,7 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
             except Exception as exc:
                 _job.update(status="error", error=str(exc))
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         loop.run_in_executor(_executor, _run)
         return {"status": "running"}
 

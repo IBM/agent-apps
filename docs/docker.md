@@ -1,69 +1,124 @@
 # Running cuga-apps with Docker / Podman
 
-All demo apps run in a single container alongside the umbrella UI and Arize Phoenix observability.
+All 16 demo apps, the umbrella UI, and Arize Phoenix observability run in three containers managed by a single `docker compose up`.
 
 ## Prerequisites
 
-Install [Podman Desktop](https://podman-desktop.io) (Mac/Windows) or Docker Desktop, then make sure a VM is running:
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [Podman Desktop](https://podman-desktop.io) (Mac/Windows).
+
+**Podman only** — start the VM first:
 
 ```bash
-# Podman — one-time VM setup
-podman machine init
+podman machine init     # one-time setup
 podman machine start
-
-# Verify
-podman info
+podman info             # verify
 ```
 
-## Build
+---
+
+## Quick start
 
 ```bash
-# From the repo root
-podman-compose build
-# or: docker compose build
+# 1. Clone the repo
+git clone <repo-url>
+cd cuga-apps
+
+# 2. Create your environment file
+cp apps/.env.example apps/.env
+#    → open apps/.env and fill in at least LLM_PROVIDER + the matching API key
+
+# 3. Build the images (takes several minutes on first run)
+docker compose build        # or: podman-compose build
+
+# 4. Start everything
+docker compose up -d        # or: podman-compose up -d
 ```
 
-This builds two images:
-- `Dockerfile.apps` — all 16 Python demo apps
-- `ui/Dockerfile` — the React/nginx umbrella UI
+Open **http://localhost:3000** — the umbrella UI lists every demo app with a "Try it now" button.
 
-Build takes several minutes the first time (downloads ~1 GB of Python deps including PyTorch). Subsequent builds reuse the layer cache and are fast.
+---
 
-## Start
+## Environment variables
+
+All apps read from `apps/.env`. The file is pre-documented with every variable — see [`apps/.env.example`](../apps/.env.example) for the full reference. The essentials are:
+
+### Step 1 — choose an LLM provider (required)
+
+Set exactly one block. Most apps work with any provider; a few hardcode Anthropic (noted below).
+
+**Anthropic** (recommended for external users)
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**OpenAI**
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+**IBM RITS**
+```bash
+LLM_PROVIDER=rits
+RITS_API_KEY=<your-key>
+RITS_BASE_URL=https://inference-3scale-apicast-production.apps.rits.fmaas.res.ibm.com
+```
+
+**watsonx.ai**
+```bash
+LLM_PROVIDER=watsonx
+WATSONX_APIKEY=<your-key>
+WATSONX_PROJECT_ID=<your-project-id>   # or WATSONX_SPACE_ID
+```
+
+**LiteLLM proxy**
+```bash
+LLM_PROVIDER=litellm
+LITELLM_API_KEY=<your-key>
+LITELLM_BASE_URL=https://your-proxy/
+```
+
+**Ollama (local, no key)**
+```bash
+LLM_PROVIDER=ollama
+# In Docker, point to the host machine:
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+### Step 2 — app-specific keys (set what you need)
+
+| Variable | Used by | Where to get it |
+|----------|---------|-----------------|
+| `TAVILY_API_KEY` | web_researcher, travel_planner, hiking_research, youtube_research, arch_diagram | [tavily.com](https://tavily.com) |
+| `ALPHA_VANTAGE_API_KEY` | stock_alert | [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
+| `OPENTRIPMAP_API_KEY` | travel_planner | [opentripmap.io](https://opentripmap.io/product) |
+| `OPENAI_API_KEY` | voice_journal (Whisper transcription) | [platform.openai.com](https://platform.openai.com) |
+
+### Step 3 — email alerts (optional)
+
+Apps with email alerts (newsletter, stock_alert, drop_summarizer, web_researcher, voice_journal, smart_todo) fall back gracefully to logging if SMTP is not configured.
 
 ```bash
-podman-compose up -d
+SMTP_HOST=smtp.gmail.com
+SMTP_USERNAME=you@gmail.com
+SMTP_PASSWORD=your-gmail-app-password   # not your login password
+
+ALERT_TO=you@gmail.com      # newsletter, drop_summarizer, stock_alert
+DIGEST_TO=you@gmail.com     # voice_journal
+RESEARCH_TO=you@gmail.com   # web_researcher
 ```
 
-Services:
+> **Gmail tip:** create an [App Password](https://myaccount.google.com/apppasswords) under your Google account security settings — your normal login password won't work.
 
-| Service | URL |
-|---------|-----|
-| Umbrella UI | http://localhost:3000 |
-| Phoenix observability | http://localhost:6006 |
-| All demo apps | see port table below |
+---
 
-## Stop
+## Services and ports
 
-```bash
-podman-compose down
-```
-
-## Logs
-
-```bash
-# All apps (streaming)
-podman-compose logs -f apps
-
-# UI or Phoenix
-podman-compose logs -f ui
-podman-compose logs -f phoenix
-
-# Last 100 lines from apps
-podman logs --tail 100 cuga-apps_apps_1
-```
-
-## App ports
+| Service | URL | Notes |
+|---------|-----|-------|
+| **Umbrella UI** | http://localhost:3000 | App gallery with "Try it now" links |
+| **Phoenix** | http://localhost:6006 | LLM observability (traces, spans) |
 
 | App | Port | URL |
 |-----|------|-----|
@@ -84,60 +139,78 @@ podman logs --tail 100 cuga-apps_apps_1
 | webpage_summarizer | 8071 | http://localhost:8071 |
 | code_reviewer | 18807 | http://localhost:18807 |
 
-## Tuning Podman VM memory
+---
 
-All 16 apps run in one container. Each Python process uses ~800 MB, so the VM needs at least 12 GB to run comfortably (default is 8 GB).
+## Common commands
+
+```bash
+# Stop everything
+docker compose down
+
+# View streaming logs
+docker compose logs -f apps       # all demo apps
+docker compose logs -f ui         # nginx / UI
+docker compose logs -f phoenix    # observability
+
+# Last 100 lines
+docker compose logs --tail 100 apps
+```
+
+---
+
+## Rebuilding after changes
+
+Code changes only (no new packages):
+```bash
+docker compose build apps
+docker compose up -d
+```
+
+After adding a package to `requirements.apps.txt`:
+```bash
+docker compose build --no-cache apps
+docker compose up -d
+```
+
+After changing the UI (`ui/src/`):
+```bash
+docker compose build ui
+docker compose up -d
+```
+
+---
+
+## Memory (Podman only)
+
+16 Python processes share one container. Each uses roughly 600–800 MB with models loaded, so the Podman VM needs at least **12 GB**:
 
 ```bash
 podman machine stop
-podman machine set --memory 12288   # 12 GB — recommended
-# podman machine set --memory 16384 # 16 GB — if you have it
+podman machine set --memory 12288   # 12 GB
 podman machine start
 ```
 
 Check current allocation:
-
 ```bash
 podman machine inspect | grep -i memory
 ```
 
-## Rebuilding after code changes
-
-Changes to app code only (no new dependencies):
-
-```bash
-podman-compose build apps
-podman-compose up -d
-```
-
-After adding a new package to `requirements.apps.txt`:
-
-```bash
-podman-compose build --no-cache apps
-podman-compose up -d
-```
+---
 
 ## Troubleshooting
 
 **"Cannot connect to Podman" / SSH handshake failed**
-
-The Podman VM dropped its connection. Restart it:
-
 ```bash
 podman machine stop && podman machine start
 ```
 
 **"No space left on device" during build**
-
-The Podman VM's disk is full. Prune unused images and build cache:
-
 ```bash
 podman system prune -f
 podman image prune -f
 ```
 
-If it recurs, increase the VM disk size (requires recreating the machine):
-
+If it recurs, increase the VM disk (requires recreating the machine):
 ```bash
 podman machine stop
 podman machine rm
@@ -146,12 +219,22 @@ podman machine start
 ```
 
 **"Container name already in use"**
-
-Stale containers from a previous run. Remove them:
-
 ```bash
-podman-compose down
-podman container prune -f
+docker compose down
+docker container prune -f
+docker compose up -d
 ```
 
-Then retry `podman-compose up -d`.
+**App not responding after `docker compose up`**
+
+Check the startup logs — an app may have exited due to a missing dependency:
+```bash
+docker compose logs apps | grep -E "ERROR|Traceback|ImportError"
+```
+
+**"Try it now" opens but nothing loads**
+
+The app may have failed to start. Check:
+```bash
+docker compose logs apps | grep -i "Starting\|Error\|port"
+```

@@ -1,8 +1,33 @@
 # cuga-apps
 
-## Running with Docker / Podman
+A collection of 16 AI agent demos built with [CUGA](https://github.com/anupamamurthi/cuga). Each app is a standalone FastAPI server with a browser UI. All apps run together via Docker — one command gets everything up.
 
-See **[docs/docker.md](docs/docker.md)** for the full guide: building the image, tuning VM memory, starting and stopping, viewing logs, and troubleshooting common errors.
+## Quickstart with Docker
+
+The fastest way to run all 16 demos:
+
+```bash
+git clone <repo-url>
+cd cuga-apps
+
+# Set up your environment (fill in at least LLM_PROVIDER + API key)
+cp apps/.env.example apps/.env
+
+# Build and start all services
+docker compose build
+docker compose up -d
+```
+
+Open **http://localhost:3000** — the app gallery loads with a "Try it now" button for each demo.
+
+> **Podman users:** the default VM memory (8 GB) is not enough for 16 concurrent Python processes. Bump it to 12 GB before building:
+> ```bash
+> podman machine stop
+> podman machine set --memory 12288
+> podman machine start
+> ```
+
+See **[docs/docker.md](docs/docker.md)** for the full setup guide: environment variables, per-app API keys, memory tuning, logs, and troubleshooting.
 
 ---
 
@@ -104,6 +129,19 @@ python launch.py logs
 
 # Tail logs for specific apps
 python launch.py logs newsletter stock_alert --tail 50
+```
+
+### Viewing logs per app (Docker)
+
+All 16 apps share one container, so `docker compose logs apps` streams everything mixed together. Filter by port to isolate a specific app:
+
+```bash
+# Stream logs for a specific app (replace port with the app's port)
+docker compose logs -f apps 2>&1 | grep --line-buffered "8766"   # video_qa
+docker compose logs -f apps 2>&1 | grep --line-buffered "18803"  # youtube_research
+
+# Search historical logs for errors in one app
+docker compose logs apps | grep "18804"   # arch_diagram
 ```
 
 ### App ports

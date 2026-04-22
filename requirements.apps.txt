@@ -48,6 +48,9 @@ python-pptx
 # ── stock_alert ───────────────────────────────────────────────
 # (uses requests, already listed above)
 
+# ── youtube_research ─────────────────────────────────────────
+youtube-transcript-api
+
 # ── webpage_summarizer ────────────────────────────────────────
 beautifulsoup4
 

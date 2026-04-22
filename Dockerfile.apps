@@ -24,6 +24,10 @@ COPY requirements.apps.txt .
 
 RUN pip install --no-cache-dir -r requirements.apps.txt
 
+# Pre-download the whisper tiny model so the first transcription doesn't stall
+# on a cold HuggingFace download inside the container.
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', compute_type='int8')"
+
 # Copy the full apps directory (shared helpers _llm.py, _image_utils.py + all app dirs)
 COPY apps/ ./apps/
 

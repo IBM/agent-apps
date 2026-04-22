@@ -148,7 +148,9 @@ def _run_whisper(audio_path: Path, model_size: str) -> list[dict[str, Any]]:
 def _faster_whisper(audio_path: Path, model_size: str) -> list[dict[str, Any]]:
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(model_size, compute_type="int8")
+    # cpu_threads=2 leaves CPUs free for uvicorn to stay responsive during transcription.
+    # Without this, ctranslate2 claims all cores and the HTTP server becomes unreachable.
+    model = WhisperModel(model_size, compute_type="int8", cpu_threads=2, num_workers=1)
     log.info("Running faster-whisper (%s)…", model_size)
 
     segments_iter, _ = model.transcribe(

@@ -27,6 +27,7 @@ services:
       context: .
       dockerfile: Dockerfile.apps
     restart: unless-stopped
+    mem_limit: 11g
     env_file:
       - ./apps/.env
     ports:
