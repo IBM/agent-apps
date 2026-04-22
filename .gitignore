@@ -12,3 +12,4 @@ apps/voice_journal/journal/*/
 apps/deck_forge/outputs/*/
 apps/.*.log
 apps/.launch_pids
+apps/video_qa/videos/SIL_AllHands_03122026.mp4

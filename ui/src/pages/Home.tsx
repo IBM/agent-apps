@@ -222,7 +222,7 @@ export default function Home() {
   const tableProps = { search, filterStatus, filterType, filterCategory }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-4">
 
       {/* ── Hero ── */}
       <div className="mb-8">

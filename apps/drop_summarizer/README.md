@@ -1,8 +1,8 @@
 # Drop Summarizer
 
-Watches an inbox folder for new files. Each file is extracted, summarized by the
-agent, stored with its full content, and optionally triggers an email alert when
-the summary matches configured keywords. Files can then be queried via chat.
+Watches an inbox folder for new files. The agent uses tools to extract and summarize each file,
+stores the result, and optionally triggers an email alert when the summary matches configured keywords.
+Files can then be queried via chat.
 
 **Port:** 18794  
 **Supported file types:** `.txt`, `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.tiff`, `.bmp`, `.gif`
@@ -14,24 +14,25 @@ the summary matches configured keywords. Files can then be queried via chat.
 ### The App (main.py)
 
 - **Watches** the inbox folder — asyncio background loop polls every N seconds
-- **Extracts content** from each file before the agent sees it:
-  - `.txt`, `.md` — reads text directly
-  - `.pdf`, images — calls docling for OCR / layout-aware extraction
-- **Stores** both the extracted content and the agent's summary in SQLite (`summaries.db`)
+- **Stores** both extracted content and the agent's summary in SQLite (`summaries.db`)
 - **Checks keywords** against the summary and sends email alerts — no LLM involved
-- **Injects full content** as context when a user asks a question about a specific file
 - **Serves the web UI** — upload, summary feed, chat, settings (FastAPI)
 - **Persists settings** to `.store.json` (poll interval, watch dir, keywords, email config)
 
 ### CugaAgent
 
-The agent is given **no tools**. It receives plain text and returns plain text.
+The agent has two tools and orchestrates its own extraction and Q&A.
 
-| Invocation | Input | Output |
-|---|---|---|
-| New file arrives | Extracted content (up to 12 000 chars) | Summary |
-| User asks about a file | Full stored content + question | Answer |
-| User asks generally | Recent summaries as context + question | Answer |
+| Tool | Purpose |
+|---|---|
+| `extract_document(file_path)` | Reads a file — plain text for `.txt`/`.md`, docling for PDF/images |
+| `get_document_content(filename)` | Retrieves stored full content from SQLite for Q&A |
+
+| Invocation | What the agent does |
+|---|---|
+| New file arrives | Calls `extract_document`, then summarizes |
+| User asks about a file | Calls `get_document_content`, then answers |
+| User asks generally | Receives recent summaries as context, answers directly |
 
 ### Agent Instructions
 
@@ -60,20 +61,20 @@ pip install docling
 File lands in ./inbox/
        │
        ▼  (watcher polls every N seconds)
-App: _extract_content(file)
+CugaAgent: extract_document(file_path)
        │  .txt/.md → read text
        │  .pdf/image → docling OCR/parse
        ▼
-Agent: summarize(content[:12000])
+CugaAgent: summarize(content)
        │
        ▼
-SQLite: store { filename, summary, full_content }
+App: store { filename, summary, full_content } → SQLite
        │
        ▼
 UI: summary card appears in feed
        │
        ▼  (user clicks "Focus" or filename)
-Agent: answer(full_content + question)
+CugaAgent: get_document_content(filename) → answer(question)
 ```
 
 Email alert check runs after summarization — pure string matching, no LLM.
@@ -99,7 +100,7 @@ Email alert check runs after summarization — pure string matching, no LLM.
 
 | File | Purpose |
 |---|---|
-| `main.py` | Everything: watcher, extraction, agent, FastAPI UI |
+| `main.py` | Everything: watcher, tools, agent, FastAPI UI |
 | `_SYSTEM` in `main.py` | Agent instructions — summary style and format (inlined) |
 | `summaries.db` | SQLite — full content + summaries (created on first run) |
 | `.store.json` | Persisted settings (created on first save) |

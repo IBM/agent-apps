@@ -39,8 +39,25 @@ def transcribe(video_path: str | Path, model_size: str = "base") -> list[dict[st
         model_size: Whisper model size — "tiny", "base", "small", "medium", "large-v3".
     """
     video_path = Path(video_path)
+
+    # When running in Docker, videos must be placed in apps/video_qa/videos/
+    # on the host, which is mounted read-only at /videos inside the container.
+    _videos_dir = Path("/videos")
+    if _videos_dir.exists():
+        try:
+            video_path.resolve().relative_to(_videos_dir.resolve())
+        except ValueError:
+            raise ValueError(
+                f"File must be inside /videos. "
+                f"Copy your file to apps/video_qa/videos/ on the host and use "
+                f"/videos/<filename> as the path. Got: {video_path}"
+            )
+
     if not video_path.exists():
-        raise FileNotFoundError(f"Video file not found: {video_path}")
+        raise FileNotFoundError(
+            f"Video file not found: {video_path}. "
+            f"Make sure the file is in apps/video_qa/videos/ and use /videos/<filename>."
+        )
 
     cache_key  = _file_hash(video_path)
     cache_file = _CACHE_DIR / f"{cache_key}_{model_size}.json"

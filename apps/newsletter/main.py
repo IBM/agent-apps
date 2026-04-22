@@ -381,6 +381,9 @@ def _web(port: int) -> None:
 
     if _stored.get("feeds"):
         log.info("Restored %d feed(s)", len(_stored["feeds"]))
+    else:
+        _update_store(feeds=["https://rss.arxiv.org/rss/cs"])
+        log.info("Initialized default feed: rss.arxiv.org/rss/cs")
 
     # start background scheduler
     asyncio.get_event_loop().create_task(_alert_scheduler(_agent))

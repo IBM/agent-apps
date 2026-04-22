@@ -146,9 +146,9 @@ export default function UseCaseDetail() {
         </div>
       </section>
 
-      {/* What CUGA++ contributes */}
+      {/* What CUGA contributes */}
       <section className="mb-8">
-        <h3 className="text-base font-semibold text-white mb-3">What CUGA++ enables</h3>
+        <h3 className="text-base font-semibold text-white mb-3">What CUGA enables</h3>
         <ul className="space-y-2">
           {uc.cugaContribution.map((point, i) => (
             <li key={i} className="flex items-start gap-2.5 text-sm text-gray-300">

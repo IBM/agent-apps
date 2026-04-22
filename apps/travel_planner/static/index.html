@@ -78,9 +78,13 @@
 
         <div>
           <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Travel data keys</p>
-          <label class="block text-xs text-slate-500 mb-1">Tavily API Key *</label>
-          <input id="cfg-tavily-key" type="password" placeholder="tvly-…"
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs text-slate-500">Tavily API Key <span class="text-red-400">*</span></label>
+            <span id="cfg-tavily-status" class="hidden text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">✓ Pre-configured</span>
+          </div>
+          <input id="cfg-tavily-key" type="password" placeholder="tvly-… (required for web search)"
             class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono" />
+          <p class="text-xs text-slate-400 mt-1">Used for visa requirements, transport info, and local events. Get a free key at <a href="https://tavily.com" target="_blank" class="text-blue-500 hover:underline">tavily.com</a>.</p>
         </div>
 
         <div>
@@ -184,21 +188,6 @@
               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
 
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Agent</label>
-            <div class="flex rounded-lg border border-slate-200 overflow-hidden">
-              <button onclick="setAgent('cuga')" data-agent="cuga"
-                class="agent-btn flex-1 py-2 text-xs font-semibold transition-colors">
-                🤖 CUGAAgent
-              </button>
-              <button onclick="setAgent('react')" data-agent="react"
-                class="agent-btn flex-1 py-2 text-xs font-semibold transition-colors border-l border-slate-200">
-                ⚛️ ReAct
-              </button>
-            </div>
-            <p id="agent-desc" class="text-xs text-slate-400 mt-1.5"></p>
-          </div>
-
           <button onclick="planTrip()"
             class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-2.5 text-sm font-semibold transition-colors mt-1">
             Generate Itinerary
@@ -252,7 +241,6 @@
             <div>
               <div class="flex items-center gap-2 mb-0.5">
                 <h2 id="result-title" class="font-bold text-slate-800 text-lg"></h2>
-                <span id="result-agent-badge" class="text-xs px-2 py-0.5 rounded-full font-medium"></span>
               </div>
               <p id="result-meta" class="text-xs text-slate-400"></p>
             </div>
@@ -355,7 +343,11 @@
       const prefill = await fetch('/config/prefill').then(r => r.json());
       if (prefill.rits_api_key)        document.getElementById('cfg-rits-key').value   = prefill.rits_api_key;
       if (prefill.rits_base_url)       document.getElementById('cfg-rits-url').value   = prefill.rits_base_url;
-      if (prefill.tavily_api_key)      document.getElementById('cfg-tavily-key').value = prefill.tavily_api_key;
+      if (prefill.tavily_api_key) {
+        document.getElementById('cfg-tavily-key').value = prefill.tavily_api_key;
+        const s = document.getElementById('cfg-tavily-status');
+        s.classList.remove('hidden');
+      }
       if (prefill.opentripmap_api_key) document.getElementById('cfg-otm-key').value    = prefill.opentripmap_api_key;
       if (prefill.rits_model) {
         const sel = document.getElementById('cfg-rits-model');
@@ -378,29 +370,8 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   let selectedStyle = 'mid-range';
-  let selectedAgent = 'cuga';
   let selectedInterests = new Set();
   let currentThreadId = null;
-
-  const AGENT_META = {
-    cuga:  { label: '🤖 CUGAAgent',      badge: 'bg-violet-100 text-violet-700', desc: 'Graph-based reasoning with policy system' },
-    react: { label: '⚛️ LangGraph ReAct', badge: 'bg-orange-100 text-orange-700', desc: 'Prebuilt tool-call loop (think → act → observe)' },
-  };
-
-  function setAgent(a) {
-    selectedAgent = a;
-    document.querySelectorAll('.agent-btn').forEach(b => {
-      const isActive = b.dataset.agent === a;
-      const activeCls = a === 'cuga' ? 'bg-violet-600 text-white' : 'bg-orange-500 text-white';
-      b.className = 'agent-btn flex-1 py-2 text-xs font-semibold transition-colors ' +
-        (isActive ? activeCls : 'bg-white text-slate-500 hover:bg-slate-50') +
-        (b.dataset.agent === 'react' ? ' border-l border-slate-200' : '');
-    });
-    document.getElementById('agent-desc').textContent = AGENT_META[a].desc;
-  }
-
-  // Set initial toggle state on load
-  window.addEventListener('DOMContentLoaded', () => setAgent('cuga'));
   const INTERESTS = ['temples','food','museums','nature','architecture',
                      'nightlife','shopping','hiking','beaches','art',
                      'history','street food','technology','sport'];
@@ -502,7 +473,7 @@
         body: JSON.stringify({
           destination: dest, days, travel_month: month,
           travel_style: selectedStyle, interests, origin_city: origin,
-          agent_type: selectedAgent,
+          agent_type: 'cuga',
         })
       });
 
@@ -514,17 +485,13 @@
       const data = await res.json();
       stopStepAnimation();
 
-      const agentMeta = AGENT_META[data.agent_type] || AGENT_META.cuga;
       document.getElementById('result-title').textContent = `${days}-Day ${dest} Itinerary`;
       document.getElementById('result-meta').textContent =
         `${month} · ${selectedStyle} · ${interests.length ? interests.join(', ') : 'general'}`;
-      const badge = document.getElementById('result-agent-badge');
-      badge.textContent = agentMeta.label;
-      badge.className = `text-xs px-2 py-0.5 rounded-full font-medium ${agentMeta.badge}`;
       document.getElementById('itinerary-content').innerHTML = marked.parse(data.itinerary || '');
 
       // Store thread_id for follow-ups (scoped per agent by server)
-      currentThreadId = `${data.agent_type}-plan-${dest.toLowerCase().replace(/\s+/g, '-')}`;
+      currentThreadId = `cuga-plan-${dest.toLowerCase().replace(/\s+/g, '-')}`;
 
       showResult();
       show('chat-card');
@@ -554,7 +521,7 @@
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, thread_id: currentThreadId, agent_type: selectedAgent })
+        body: JSON.stringify({ message: msg, thread_id: currentThreadId, agent_type: 'cuga' })
       });
 
       if (!res.ok) {
@@ -563,9 +530,8 @@
       }
 
       const data = await res.json();
-      const agentMeta = AGENT_META[data.agent_type] || AGENT_META.cuga;
       const el = document.getElementById(thinkingId);
-      el.innerHTML = `<span class="text-[10px] font-semibold ${agentMeta.badge} px-1.5 py-0.5 rounded-full mb-1 inline-block">${agentMeta.label}</span><br>` + marked.parse(data.response || '');
+      el.innerHTML = marked.parse(data.response || '');
       setStatus(null);
 
     } catch (e) {

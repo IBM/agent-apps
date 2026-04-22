@@ -118,7 +118,9 @@ def _save_store(data: dict) -> None:
 # SQLite summary log
 # ---------------------------------------------------------------------------
 
-_DB_PATH = _DIR / "summaries.db"
+_DATA_DIR = _DIR / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+_DB_PATH = _DATA_DIR / "summaries.db"
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS summaries (
@@ -184,50 +186,92 @@ def _get_summary_content(filename: str) -> str | None:
     return row["content"] if row else None
 
 
+
 # ---------------------------------------------------------------------------
-# Content extraction — app-side, no agent involvement
+# Tools
 # ---------------------------------------------------------------------------
 
-def _extract_content(path: Path) -> str:
+# Watcher pre-extracts heavy files here before calling the agent.
+# extract_document tool reads from cache so docling never runs inside the agent
+# (avoiding code-executor timeouts on slow CPU docling runs).
+_extraction_cache: dict[str, str] = {}
+
+
+def _extract_to_cache(path: Path) -> str:
+    """Run extraction and store in cache. Called by the watcher before agent.invoke()."""
     ext = path.suffix.lower()
     if ext in TEXT_EXTENSIONS:
-        return path.read_text(encoding="utf-8", errors="replace")
-    try:
-        from docling.document_converter import DocumentConverter
-        result   = DocumentConverter().convert(str(path))
-        markdown = result.document.export_to_markdown()
-        return markdown if markdown.strip() else "(no text extracted — file may be purely graphical)"
-    except ImportError:
-        return f"(docling not installed — run: pip install docling)\nFile: {path.name}"
-    except Exception as exc:
-        return f"(extraction error: {exc})"
+        content = path.read_text(encoding="utf-8", errors="replace")
+    else:
+        try:
+            from docling.document_converter import DocumentConverter
+            result   = DocumentConverter().convert(str(path))
+            markdown = result.document.export_to_markdown()
+            content  = markdown if markdown.strip() else "(no text extracted — file may be purely graphical)"
+        except ImportError:
+            content = "(docling not installed — run: pip install docling)"
+        except Exception as exc:
+            content = f"(extraction error: {exc})"
+    _extraction_cache[path.name] = content
+    return content
+
+
+def _make_tools():
+    from langchain_core.tools import tool
+
+    @tool
+    def extract_document(file_path: str) -> str:
+        """
+        Extract the full text content from a file. Supports .txt, .md, .pdf,
+        .png, .jpg, .jpeg, .tiff, .bmp, and .gif. Use this before summarizing
+        a newly dropped file.
+
+        Args:
+            file_path: Absolute or relative path to the file.
+        """
+        path = Path(file_path)
+        # Return from cache if pre-extracted (avoids re-running docling)
+        if path.name in _extraction_cache:
+            return _extraction_cache[path.name]
+        if not path.exists():
+            return f"(file not found: {file_path})"
+        return _extract_to_cache(path)
+
+    @tool
+    def get_document_content(filename: str) -> str:
+        """
+        Retrieve the full previously-extracted text for a file that has already
+        been processed. Use this when answering questions about a specific file.
+
+        Args:
+            filename: The filename as it appears in the summary feed (e.g. "report.pdf").
+        """
+        content = _get_summary_content(filename)
+        if content is None:
+            return f"(no stored content found for '{filename}')"
+        return content[:20000] if content else "(stored content is empty)"
+
+    return [extract_document, get_document_content]
 
 
 # ---------------------------------------------------------------------------
-# Agent — no tools, just text in / text out
+# Agent
 # ---------------------------------------------------------------------------
 
 _SYSTEM = """\
 # Document Summarizer
 
-You receive the full text of a dropped file. Your job is to produce a concise,
-useful summary that captures what the document is actually about.
+You are a document summarizer with tools to read file contents.
 
-## Rules
+## When summarizing a new file
+1. Call extract_document with the file path to get the content.
+2. Produce a concise summary in the format below.
 
-- Read the content carefully before summarizing.
-- Lead with a one-sentence TL;DR.
-- Follow with 3–5 bullet points covering the key points, decisions, or facts.
-- If the document is a meeting note or action item list, call out any action items explicitly.
-- If the document is creative writing or a story, summarize the narrative instead.
-- If the document is code or a technical spec, summarize the purpose and main components.
-- Keep the whole summary under 15 lines.
-- Do not repeat the filename or say "this document is about" — just summarize.
-- Do not add any commentary about your process.
+## When answering questions about a specific file
+Call get_document_content with the filename to retrieve its stored text, then answer.
 
-## Format
+## Summary format
 
-```
 <one sentence TL;DR>
 
 Key points:
@@ -237,7 +281,14 @@ Key points:
 
 Action items (if any):
 - <action item with owner if mentioned>
-```
+
+## Rules
+- Lead with a one-sentence TL;DR.
+- 3–5 bullet points covering key points, decisions, or facts.
+- Call out action items if present (meeting notes, task lists).
+- For code or specs, summarize purpose and main components.
+- Keep the whole summary under 15 lines.
+- Do not repeat the filename or say "this document is about".
 """
 
 
@@ -250,7 +301,7 @@ def make_agent():
             provider=os.getenv("LLM_PROVIDER"),
             model=os.getenv("LLM_MODEL"),
         ),
-        tools=[],
+        tools=_make_tools(),
         special_instructions=_SYSTEM,
         cuga_folder=str(_DIR / ".cuga"),
     )
@@ -287,6 +338,7 @@ def _send_email(subject: str, body: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _watcher_status = {"running": False, "last_check": None, "processed": 0}
+_pending_files: set[str] = set()  # filenames currently being processed
 
 
 async def _watcher_loop(agent) -> None:
@@ -316,17 +368,23 @@ async def _watcher_loop(agent) -> None:
                     log.warning("Could not move %s: %s", file_path.name, exc)
                     continue
 
+                _pending_files.add(file_path.name)
                 log.info("Processing: %s", file_path.name)
                 try:
-                    # 1. App extracts content — no agent involvement
-                    content = _extract_content(dest)
+                    # 1. Pre-extract content (heavy docling runs happen here, not inside agent).
+                    #    Stored in _extraction_cache so extract_document tool returns instantly.
+                    stored_content = await asyncio.get_event_loop().run_in_executor(
+                        None, _extract_to_cache, dest
+                    )
 
-                    # 2. Agent summarizes the extracted text
+                    # 2. Agent calls extract_document tool → hits cache, no timeout risk.
                     result = await agent.invoke(
-                        f"Summarize the following document.\n\nFilename: {file_path.name}\n\n{content[:12000]}",
+                        f"A new file was dropped: {dest}\n\nFilename: {file_path.name}\n\n"
+                        f"Use the extract_document tool to read it, then produce a summary.",
                         thread_id=f"sum-{file_path.stem}",
                     )
                     summary = result.answer
+                    _extraction_cache.pop(file_path.name, None)  # clean up
 
                     # 3. Keyword alert check
                     alerted = False
@@ -335,14 +393,16 @@ async def _watcher_loop(agent) -> None:
                         subject = f"📄 Drop Alert: {file_path.name} — keywords: {', '.join(matched)}"
                         alerted = _send_email(subject, f"File: {file_path.name}\n\nSummary:\n{summary}")
 
-                    # 4. Store summary (for display) and full content (for Q&A)
-                    _save_summary(file_path.name, summary, content=content, alerted=alerted)
+                    # 4. Persist summary and content
+                    _save_summary(file_path.name, summary, content=stored_content, alerted=alerted)
                     _watcher_status["processed"] += 1
-                    log.info("Done: %s (%d words extracted)", file_path.name, len(content.split()))
+                    log.info("Done: %s", file_path.name)
 
                 except Exception as exc:
                     log.error("Error processing %s: %s", file_path.name, exc)
                     _save_summary(file_path.name, f"Error: {exc}", content="", alerted=False)
+                finally:
+                    _pending_files.discard(file_path.name)
 
         await asyncio.sleep(interval)
 
@@ -414,34 +474,37 @@ def _web(port: int) -> None:
         return {"ok": True, "filename": file.filename, "message": "File queued for summarization."}
 
     # ── Chat (ask over files) ──────────────────────────────────────────────
+    @app.get("/files/pending")
+    async def api_pending():
+        return {"pending": list(_pending_files)}
+
     @app.post("/ask")
     async def api_ask(req: AskReq):
+        if req.filename and req.filename in _pending_files:
+            return JSONResponse(
+                {"error": f"'{req.filename}' is still being processed. Please wait a moment."},
+                status_code=400,
+            )
+        if req.filename:
+            all_s = _list_summaries(200)
+            if not any(s["filename"] == req.filename for s in all_s):
+                return JSONResponse(
+                    {"error": f"'{req.filename}' hasn't been processed yet."},
+                    status_code=400,
+                )
         try:
             if req.filename:
-                # Scoped to a specific file — use full extracted content
-                full_content = _get_summary_content(req.filename)
+                # Scoped to a specific file — agent uses get_document_content tool
                 all_s  = _list_summaries(200)
                 match  = next((s for s in all_s if s["filename"] == req.filename), None)
                 thread = f"file-{match['id']}" if match else "chat"
-                if full_content:
-                    prompt = (
-                        f"The user is asking about this specific file.\n\n"
-                        f"File: {req.filename}\n"
-                        f"Full content:\n{full_content[:16000]}\n\n"
-                        f"Question: {req.question}"
-                    )
-                elif match:
-                    # fallback to summary if content wasn't stored (legacy row)
-                    prompt = (
-                        f"File: {match['filename']}\n"
-                        f"Summary:\n{match['summary']}\n\n"
-                        f"Question: {req.question}"
-                    )
-                else:
-                    prompt = req.question
-                    thread = "chat"
+                prompt = (
+                    f"The user is asking about this file: {req.filename}\n\n"
+                    f"Use the get_document_content tool to retrieve its full text, then answer.\n\n"
+                    f"Question: {req.question}"
+                )
             else:
-                # General — inject recent summaries as context
+                # General — inject recent summaries as context (they're small)
                 recent  = _list_summaries(10)
                 context = "\n\n".join(
                     f"File: {s['filename']}\nSummary: {s['summary']}"
@@ -868,17 +931,35 @@ async function uploadFile(file) {
   try {
     const res = await fetch('/upload', { method: 'POST', body: fd });
     const data = await res.json();
-    status.textContent = `✓ ${data.message}`;
-    setTimeout(async () => {
-      status.style.display = 'none';
-      await loadSummaries();
-      // Auto-focus the just-uploaded file once it appears
-      if (data.filename) setActiveFile(data.filename, null);
-    }, 3000);
+    status.textContent = `⏳ ${file.name} queued — processing…`;
+    status.style.color = '#93c5fd';
+    _pollForFile(data.filename, status);
   } catch(e) {
     status.style.color = '#f87171';
     status.textContent = 'Upload failed: ' + e.message;
   }
+}
+
+async function _pollForFile(filename, statusEl) {
+  const maxWait = 10 * 60 * 1000; // 10 minutes
+  const interval = 5000;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    await new Promise(r => setTimeout(r, interval));
+    try {
+      const summaries = await fetch('/summaries').then(r => r.json());
+      const match = summaries.find(s => s.filename === filename);
+      if (match) {
+        renderFeed(summaries);
+        statusEl.style.color = '#4ade80';
+        statusEl.textContent = `✓ ${filename} ready`;
+        setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+        return;
+      }
+    } catch(e) {}
+  }
+  statusEl.style.color = '#f87171';
+  statusEl.textContent = `Processing ${filename} is taking longer than expected.`;
 }
 
 function handleDrop(event) {

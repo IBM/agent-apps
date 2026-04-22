@@ -1,4 +1,4 @@
-# Newsletter Intelligence — cuga++ demo
+# Newsletter Intelligence
 
 Monitor RSS feeds, ask questions over live articles, and configure keyword
 alerts that email you when matches are found.

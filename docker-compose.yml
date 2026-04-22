@@ -27,6 +27,8 @@ services:
       context: .
       dockerfile: Dockerfile.apps
     restart: unless-stopped
+    env_file:
+      - ./apps/.env
     ports:
       - "18793:18793"   # newsletter
       - "18794:18794"   # drop_summarizer
@@ -80,10 +82,12 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006
     volumes:
       - drop_summarizer_data:/app/apps/drop_summarizer/inbox
+      - drop_summarizer_db:/app/apps/drop_summarizer/data
+      - video_qa_cache:/app/apps/video_qa/.cache
       - voice_journal_data:/app/apps/voice_journal
       - smart_todo_data:/app/apps/smart_todo
       - deck_forge_outputs:/app/apps/deck_forge/outputs
-      - ./videos:/videos:ro
+      - ./apps/video_qa/videos:/videos:ro
     depends_on:
       - phoenix
 
@@ -100,6 +104,8 @@ services:
 # ── Named volumes ────────────────────────────────────────────
 volumes:
   drop_summarizer_data:
+  drop_summarizer_db:
+  video_qa_cache:
   voice_journal_data:
   smart_todo_data:
   deck_forge_outputs:

@@ -39,7 +39,7 @@ export interface UseCase {
   channels: string[]
   /** Which tool factories are used */
   tools: string[]
-  /** Path relative to cuga-agent-mar30 repo, or null if in cuga++ */
+  /** Path relative to repo root */
   demoPath: string | null
   /** Runnable command (copy-pasteable) */
   howToRun: {
@@ -51,7 +51,7 @@ export interface UseCase {
   architecture: string
   /** ASCII/text diagram of the pipeline */
   diagram: string
-  /** What cuga++ specifically contributes */
+  /** What CUGA specifically contributes */
   cugaContribution: string[]
   /** Future: URL of the live app (empty until implemented) */
   appUrl: string | null
@@ -75,18 +75,18 @@ export const USE_CASES: UseCase[] = [
     status: 'working',
     channels: ['EmailChannel'],
     tools: ['make_market_tools()'],
-    demoPath: 'docs/examples/demo_apps/stock_alert',
+    demoPath: 'apps/stock_alert',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'ALPHA_VANTAGE_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ALPHA_VANTAGE_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
       setup: [
-        'cd docs/examples/demo_apps/stock_alert',
+        'cd apps/stock_alert',
         'pip install -r requirements.txt',
       ],
       command: 'python main.py',
     },
     architecture:
       'FastAPI web server serves the single-page UI. Market Query: POST /ask → CugaAgent.invoke(symbol + question) → make_market_tools() fetches live data → answer. Price Watch: POST /watch/start → asyncio task loops every 5 min → agent checks price against threshold → if "PRICE ALERT" in answer, sends SMTP email. Watch state persists in .store.json across restarts.',
-    diagram: `python main.py  →  http://127.0.0.1:18794
+    diagram: `python main.py  →  http://127.0.0.1:18801
 
 Panel 1 — Market Query (on-demand):
 User: "What is the current price and 24h change?"
@@ -134,11 +134,11 @@ asyncio task (every 5 min)
     status: 'working',
     channels: [],
     tools: ['get_system_metrics()', 'list_top_processes()', 'check_disk_usage()', 'find_large_files()', 'get_service_status()', 'run_safe_command()'],
-    demoPath: 'docs/examples/demo_apps/server_monitor',
+    demoPath: 'apps/server_monitor',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
       setup: [
-        'cd docs/examples/demo_apps/server_monitor',
+        'cd apps/server_monitor',
         'pip install -r requirements.txt',
       ],
       command: 'python main.py',
@@ -198,11 +198,11 @@ Alert entry: "python train.py consuming 88% CPU since 14:02"`,
     status: 'working',
     channels: ['EmailChannel'],
     tools: ['make_feed_tools()'],
-    demoPath: 'docs/examples/demo_apps/newsletter',
+    demoPath: 'apps/newsletter',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
       setup: [
-        'cd docs/examples/demo_apps/newsletter',
+        'cd apps/newsletter',
         'pip install -r requirements.txt',
       ],
       command: 'python main.py',
@@ -257,11 +257,11 @@ SMTP email → ALERT_TO`,
     status: 'working',
     channels: [],
     tools: ['transcribe_video()', 'search_transcript()', 'get_segment_at_time()'],
-    demoPath: 'docs/examples/demo_apps/video_qa',
+    demoPath: 'apps/video_qa',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
       setup: [
-        'cd docs/examples/demo_apps/video_qa',
+        'cd apps/video_qa',
         'pip install -r requirements.txt',
         'brew install ffmpeg',
       ],
@@ -313,34 +313,34 @@ CugaAgent (guided by skills/video_qa.md)
     type: 'documents',
     surface: 'pipeline',
     description:
-      'A browser UI with an upload panel and a summary feed. Drop any .txt, .md, .pdf, or image file into the inbox folder (or upload via the browser) — the background watcher extracts content (docling for PDF/images), the agent summarises it, and the result appears instantly in the feed. Click any file to ask follow-up questions. Optional keyword email alerts trigger when a summary matches configured terms. Summaries stored in SQLite.',
+      'A browser UI with an upload panel and a summary feed. Drop any .txt, .md, .pdf, or image file into the inbox folder (or upload via the browser) — the agent uses an extract_document tool (docling for PDF/images) to read each file, summarises it, and the result appears instantly in the feed. Click any file to ask follow-up questions via get_document_content. Optional keyword email alerts trigger when a summary matches configured terms. Summaries stored in SQLite.',
     category: 'documents',
     status: 'working',
     channels: [],
-    tools: [],
-    demoPath: 'docs/examples/demo_apps/drop_summarizer',
+    tools: ['extract_document', 'get_document_content'],
+    demoPath: 'apps/drop_summarizer',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
       setup: [
-        'cd docs/examples/demo_apps/drop_summarizer',
+        'cd apps/drop_summarizer',
         'pip install -r requirements.txt',
         'pip install docling  # optional: for PDF and image support',
       ],
       command: 'python main.py',
     },
     architecture:
-      'FastAPI serves the single-page UI. Background watcher: asyncio loop polls ./inbox/ every N seconds; on new file, app extracts content (.txt/.md read directly; .pdf/images via docling), passes to CugaAgent for summarisation, stores result in SQLite. Chat: POST /ask → agent answers using stored full content as context. Keyword alert check runs after summarisation — pure string match, no LLM.',
+      'FastAPI serves the single-page UI. Background watcher: asyncio loop polls ./inbox/ every N seconds; on new file, agent calls extract_document tool (.txt/.md read directly; .pdf/images via docling), then summarises. App stores content + summary in SQLite. Chat: POST /ask → for specific files, agent calls get_document_content tool; for general queries, recent summaries injected as context. Keyword alert check runs after summarisation — pure string match, no LLM.',
     diagram: `python main.py  →  http://127.0.0.1:18794
 
 File lands in ./inbox/report.pdf
       │  (background watcher polls every 15s)
       ▼
-App: _extract_content(file)
+CugaAgent: extract_document(file_path)
       │  .txt/.md → read text
       │  .pdf/image → docling OCR/parse
       ▼
-CugaAgent (no tools — plain text in, summary out)
-      │  skills/summarizer.md
+CugaAgent: summarize → summary
+      │
       ▼
 SQLite: store { filename, summary, full_content }
       │
@@ -349,15 +349,15 @@ UI: summary card appears in feed
 
 Chat panel (click any file to focus):
 User: "What were the key risks in this report?"
-      │  POST /ask  (full_content injected as context)
+      │  POST /ask
       ▼
-CugaAgent → answer
+CugaAgent: get_document_content(filename) → answer
 
 Keyword alert (post-summary, no LLM):
 summary contains "critical" → SMTP email → ALERT_TO`,
     cugaContribution: [
-      'CugaAgent + skills/summarizer.md — agent receives plain text, returns plain-English summary; swap the skill file to change length, style, or domain',
-      'Agent has no tools — zero tool overhead; the app handles all file extraction before the LLM is invoked',
+      'Agent uses extract_document tool to drive docling extraction — the LLM decides when and how to extract, not the app',
+      'Agent uses get_document_content tool for Q&A — retrieves stored content on demand instead of having it injected by the app',
       'Background asyncio watcher replaces inotify/polling boilerplate — file arrives, summary appears automatically',
       'Persistent SQLite store — summaries and full content survive restarts; click any past file to resume Q&A',
     ],
@@ -375,86 +375,125 @@ summary contains "critical" → SMTP email → ALERT_TO`,
   {
     id: 'web-researcher',
     name: 'Web Researcher',
-    tagline: 'Deep research reports on any topic, delivered on schedule',
+    tagline: 'Schedule recurring web research — results logged and optionally emailed',
     type: 'event-driven',
     surface: 'pipeline',
     description:
-      'A scheduled research pipeline that uses Tavily web search to produce structured reports. CronChannel fires on schedule; the agent researches from multiple angles and delivers a formatted report via email or Slack. Configurable via NL utterance — just describe what you want to monitor and how often.',
+      'A browser UI for scheduling recurring web research tasks. Add topics with hourly / daily / weekly cadences — the background scheduler runs overdue topics every 5 minutes using Tavily, logs results to SQLite, and optionally emails them. Also supports ad-hoc searches via the chat panel. Research history persists across restarts.',
     category: 'content',
     status: 'working',
-    channels: ['CronChannel', 'EmailChannel', 'SlackChannel'],
-    tools: ['make_web_search_tool()'],
-    demoPath: 'docs/examples/demo_apps/web_researcher',
+    channels: ['EmailChannel'],
+    tools: ['web_search()'],
+    demoPath: 'apps/web_researcher',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'TAVILY_API_KEY', 'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS'],
-      setup: ['cd /path/to/cuga-agent-mar30', 'pip install -e ".[dev]"'],
-      command: 'python docs/examples/demo_apps/web_researcher/app.py',
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      setup: [
+        'cd apps/web_researcher',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
     },
     architecture:
-      'CronChannel fires on schedule. The agent makes multiple web search calls to research the topic from different angles, synthesises the results, and delivers a structured report.',
-    diagram: `CronChannel ("0 8 * * 1" — Monday morning)
-      │  "Research: AI agent frameworks this week"
+      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent calls web_search (Tavily) → answer. Scheduled topics: asyncio background scheduler checks every 5 minutes for overdue topics; when due, runs the agent, logs to SQLite, and optionally emails the result. Topic schedule and email settings persisted in .store.json.',
+    diagram: `python main.py  →  http://127.0.0.1:18798
+
+Chat panel (ad-hoc):
+User: "What's the latest news on quantum computing?"
+      │  POST /ask
       ▼
-CugaAgent + make_web_search_tool()
+CugaAgent + web_search()
+      │  web_search("quantum computing news 2026")
+      ▼
+"IBM announced a 1000-qubit processor..."
+
+Scheduled topics panel:
+Topic: "AI agent frameworks"  Schedule: daily
+      │  asyncio scheduler fires (every 5 min — checks overdue)
+      ▼
+CugaAgent + web_search()
       │  web_search("AI agent frameworks 2026")
-      │  web_search("LangGraph vs AutoGen comparison")
-      │  web_search("new AI agent papers this week")
       ▼
-EmailChannel (formatted research report)`,
+SQLite: log result in research.db
+      │  (if email configured)
+      ▼
+SMTP email → ALERT_TO`,
     cugaContribution: [
-      'ConversationGateway makes research interactive — ask follow-up questions, drill into a subtopic, save the report, all in one chat',
-      'CronChannel turns a one-off research task into a standing weekly intelligence brief — no cron daemon, no script management',
-      'make_web_search_tool() returns structured Tavily results that the agent can reason over, not raw HTML blobs',
+      'CugaAgent synthesises multiple Tavily search results into a structured report — not just a list of links',
+      'Background scheduler checks overdue topics every 5 minutes without a cron daemon or external task runner',
+      'Persistent log in SQLite — all research results survive restarts and are viewable in the history panel',
+      'Email config settable from the UI — no restart needed to change SMTP credentials or recipient',
     ],
     examples: [
-      'python docs/examples/demo_apps/web_researcher/main.py --now --topic "AI agent frameworks 2026"',
-      'python docs/examples/demo_apps/web_researcher/main.py --now --topic "LangGraph vs AutoGen vs CUGA++"',
-      'python docs/examples/demo_apps/web_researcher/main.py --now --topic "multimodal AI papers this week"',
-      'python docs/examples/demo_apps/web_researcher/main.py --now --topic "enterprise AI adoption barriers"',
+      "What's the latest news on quantum computing?",
+      'Search for Python 3.13 release notes',
+      'Find recent papers on RAG architectures',
+      'What are the top stories about climate policy this week?',
+      'Add topic: "AI agent frameworks" → daily',
     ],
     appUrl: 'http://localhost:18798',
   },
   {
     id: 'voice-journal',
     name: 'Voice Journal',
-    tagline: 'Drop a voice memo — AudioChannel transcribes, agent structures, RAG stores',
+    tagline: 'Drop a voice memo — Whisper transcribes, agent structures, SQLite stores',
     type: 'audio',
     surface: 'pipeline',
     description:
-      'Record a voice memo and drop it in a watched folder. CugaWatcher detects the file, AudioChannel transcribes via Whisper locally, the agent structures the entry (mood, topics, action items), and make_rag_tools() indexes it for retrieval. CronChannel fires a weekly summary of trends and themes.',
+      'A personal journal that accepts audio recordings (.m4a, .mp3, .wav) and text entries via a browser UI. OpenAI Whisper API transcribes audio automatically (local Whisper as fallback). The agent structures each entry and stores it in SQLite alongside a Markdown file. A background watcher monitors ./inbox for new files. A configurable email digest sends a summary of recent entries on schedule.',
     category: 'content',
     status: 'working',
-    channels: ['CugaWatcher', 'AudioChannel'],
-    tools: ['make_rag_tools()'],
-    demoPath: 'docs/examples/demo_apps/voice_journal',
+    channels: ['EmailChannel'],
+    tools: [],
+    demoPath: 'apps/voice_journal',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
-      setup: ['cd /path/to/cuga-agent-mar30', 'pip install -e ".[dev]"', 'pip install openai-whisper'],
-      command: 'python docs/examples/demo_apps/voice_journal/app.py',
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'OPENAI_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'DIGEST_TO'],
+      setup: [
+        'cd apps/voice_journal',
+        'pip install -r requirements.txt',
+        '# optional local whisper fallback:',
+        'pip install openai-whisper',
+      ],
+      command: 'python main.py',
     },
     architecture:
-      'CugaWatcher detects new .mp3/.wav files. AudioChannel transcribes via Whisper locally. The agent structures the journal entry and make_rag_tools() indexes it for future retrieval.',
-    diagram: `Voice memo → ./journal/memo_20260405.mp3
+      'FastAPI serves the single-page UI. Inbox watcher: asyncio loop monitors ./inbox for new audio/text files; audio is transcribed via OpenAI Whisper API, then the agent structures the entry and stores it in SQLite + a Markdown file under ./entries/. Email digest: configurable schedule sends a summary of recent entries via SMTP.',
+    diagram: `python main.py  →  http://127.0.0.1:18799
+
+Inbox watcher (background, auto):
+./inbox/memo_20260421.m4a  (new file detected)
       │
       ▼
-CugaWatcher + AudioChannel (Whisper transcription)
-      │  clean transcript text
-      ▼
-CugaAgent ("Structure this journal entry: topics, mood, action items")
+OpenAI Whisper API → clean transcript text
       │
       ▼
-make_rag_tools().ingest_document() → ChromaDB`,
+CugaAgent ("Structure this journal entry: mood, topics, action items")
+      │
+      ▼
+SQLite (journal.db) + ./entries/memo_20260421.md
+
+Upload / quick-write panel:
+User uploads audio or types an entry
+      │  POST /entry or file upload
+      ▼
+Same transcribe → structure → store pipeline
+
+Chat panel (on-demand):
+User: "What themes came up this week?"
+      │  POST /ask (recent entries injected as context)
+      ▼
+CugaAgent → "You mentioned deadlines and team collaboration…"`,
     cugaContribution: [
-      'AudioChannel transcribes audio before the agent sees it — zero LLM tokens on transcription',
-      'Whisper runs locally — no API key, no data leaves the machine',
+      'Agent structures raw transcripts into mood, topics, and action items — not just a plain text dump',
+      'Whisper API handles transcription; agent only sees clean text — zero transcription tokens wasted',
+      'Inbox watcher processes audio automatically on drop — no manual trigger needed',
+      'Configurable email digest keeps you connected to your journal without opening the app',
     ],
     examples: [
       'Click 📎 and upload a .m4a or .mp3 voice note',
-      'Show me all my journal entries from this week',
-      'What were my main themes last week?',
-      'Find entries where I mentioned project deadlines',
-      'What action items came up across my last 5 entries?',
-      'How has my mood been trending this month?',
+      'What did I write about last week?',
+      'Summarize my entries from this month',
+      'What themes keep coming up in my journal?',
+      'Show me everything I recorded on Monday',
     ],
     appUrl: 'http://localhost:18799',
   },
@@ -462,36 +501,52 @@ make_rag_tools().ingest_document() → ChromaDB`,
     id: 'smart-todo',
     name: 'Smart Todo',
     type: 'event-driven',
-    tagline: 'AI-powered task management with natural language input',
+    tagline: 'AI-powered task management with natural language input and email reminders',
     surface: 'pipeline',
     description:
-      'A task management agent that understands natural language. Add tasks conversationally ("remind me to review the PR before EOD"), get priority-sorted summaries, and receive scheduled reminders via Telegram.',
+      'A conversational todo manager with a browser UI. Add tasks in natural language ("remind me to review the PR before EOD"), set due dates, and get email reminders when items come due. Tasks stored in SQLite survive restarts. The tabbed board shows Todos, Reminders, Notes, and Done.',
     category: 'productivity',
     status: 'working',
-    channels: ['TelegramChannel', 'CronChannel'],
-    tools: ['make_rag_tools()'],
-    demoPath: 'docs/examples/demo_apps/smart_todo',
+    channels: ['EmailChannel'],
+    tools: [],
+    demoPath: 'apps/smart_todo',
     howToRun: {
-      envVars: ['ANTHROPIC_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
-      setup: ['cd /path/to/cuga-agent-mar30', 'pip install -e ".[dev]"'],
-      command: 'python docs/examples/demo_apps/smart_todo/app.py',
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      setup: [
+        'cd apps/smart_todo',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py',
     },
     architecture:
-      'TelegramChannel provides the conversational interface. make_rag_tools() stores tasks in ChromaDB. CronChannel fires a daily summary.',
-    diagram: `Telegram: "remind me to send the report by 5pm"
-      │
+      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent parses natural language → adds todos to SQLite (todos.db) with due dates extracted from context. Background reminder watcher: asyncio loop checks for overdue items and sends SMTP email. Todo board renders Todos / Reminders / Notes / Done tabs from SQLite on each load.',
+    diagram: `python main.py  →  http://127.0.0.1:18800
+
+Chat panel (on-demand):
+User: "Remind me to review the PR before EOD"
+      │  POST /ask
       ▼
-TelegramChannel → CugaAgent + make_rag_tools()
-      │  ingest_document("send report", metadata={due: "5pm"})
+CugaAgent → parses due date, category, priority
+      │  inserts todo into todos.db
       ▼
-CronChannel (daily summary)
-      │
+"Got it! PR review added — due today at 17:00."
+
+Todo board (tabbed, loaded from SQLite):
+  Todos | Reminders | Notes | Done
+  ─────────────────────────────────
+  ● Review the PR            due today 17:00
+  ● Deploy to production     due Friday 17:00
+
+Background reminder watcher:
+asyncio loop (every 60s)
+      │  query todos.db for overdue items
       ▼
-TelegramChannel ("📋 Today's priorities: ...")`,
+SMTP email → ALERT_TO: "Reminder: Review the PR is due now"`,
     cugaContribution: [
-      'ConversationGateway serves the web chat UI — the whole app is python app.py, no frontend work needed',
-      'make_rag_tools() turns ChromaDB into a natural-language task store — add, search, and retrieve tasks without writing vector DB client code',
-      'CronChannel fires the daily digest on schedule — no external task runner or cron daemon needed',
+      'Natural language due-date extraction — "by EOD", "Friday at 5pm", "tomorrow morning" all resolve to timestamps',
+      'Categorises input automatically into Todos, Reminders, or Notes based on phrasing',
+      'Persistent SQLite store — todos and notes survive restarts; no reconfiguration needed',
+      'Background email watcher fires on due time without a separate cron daemon',
     ],
     examples: [
       'Remind me to review the PR by EOD',
@@ -499,7 +554,7 @@ TelegramChannel ("📋 Today's priorities: ...")`,
       "What are my open todos?",
       "What's due today?",
       'Mark the PR review as done',
-      'Send me a daily digest at 9am on weekdays',
+      'Add a note: check with Alice about the project timeline',
     ],
     appUrl: 'http://localhost:18800',
   },
@@ -515,14 +570,13 @@ TelegramChannel ("📋 Today's priorities: ...")`,
     status: 'working',
     channels: [],
     tools: ['get_city_overview()', 'get_weather()', 'search_attractions()', 'web_search()'],
-    demoPath: 'docs/examples/demo_apps/travel_planner',
+    demoPath: 'apps/travel_planner',
     howToRun: {
       envVars: ['ANTHROPIC_API_KEY', 'TAVILY_API_KEY', 'OPENTRIPMAP_API_KEY'],
       setup: [
-        'cd docs/examples/demo_apps/travel_planner',
-        'uv sync',
+        'cd apps/travel_planner',
       ],
-      command: 'uv run main.py',
+      command: 'uv run --project . main.py',
     },
     architecture:
       'FastAPI serves the single-page UI. POST /plan → CugaAgent calls get_city_overview(), get_weather(), search_attractions(), web_search() → full day-by-day itinerary with budget breakdown. POST /chat → multi-turn follow-up on the same plan. POST /configure injects API keys at runtime — no restart needed. The LangGraph ReAct backend is available as an alternative via the same UI toggle.',
@@ -573,12 +627,12 @@ CugaAgent (full plan in context) → updated itinerary`,
     status: 'working',
     channels: [],
     tools: ['list_directory()', 'extract_and_index()', 'search_knowledge_base()', 'add_slide()', 'finalize()'],
-    demoPath: 'docs/examples/demo_apps/deck_forge',
+    demoPath: 'apps/deck_forge',
     howToRun: {
-      envVars: ['RITS_API_KEY or ANTHROPIC_API_KEY or OPENAI_API_KEY'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY', 'RITS_API_KEY', 'OPENAI_API_KEY'],
       setup: [
-        'cd docs/examples/demo_apps/deck_forge',
-        '# No extra packages needed — uses repo .venv',
+        'cd apps/deck_forge',
+        'pip install -r requirements.txt',
       ],
       command: 'python main.py --port 18802',
     },
@@ -639,11 +693,11 @@ SSE stream → browser: live progress per tool call`,
     status: 'working',
     channels: [],
     tools: ['web_search()', 'get_video_info()', 'get_transcript()'],
-    demoPath: 'docs/examples/demo_apps/youtube_research',
+    demoPath: 'apps/youtube_research',
     howToRun: {
-      envVars: ['TAVILY_API_KEY'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY'],
       setup: [
-        'cd docs/examples/demo_apps/youtube_research',
+        'cd apps/youtube_research',
         'pip install -r requirements.txt',
       ],
       command: 'python main.py',
@@ -701,11 +755,11 @@ CugaAgent → get_video_info + get_transcript → summary with timestamps`,
     status: 'working',
     channels: [],
     tools: ['web_search()'],
-    demoPath: 'docs/examples/demo_apps/arch_diagram',
+    demoPath: 'apps/arch_diagram',
     howToRun: {
-      envVars: ['TAVILY_API_KEY (optional)'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY'],
       setup: [
-        'cd docs/examples/demo_apps/arch_diagram',
+        'cd apps/arch_diagram',
         'pip install -r requirements.txt',
       ],
       command: 'python main.py',
@@ -769,7 +823,7 @@ CugaAgent → updated diagram with cache node added`,
     tools: ['geocode_location()', 'find_hikes()', 'get_review_summary()'],
     demoPath: 'apps/hiking_research',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'TAVILY_API_KEY (optional, for reviews)'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY'],
       setup: [
         'cd apps/hiking_research',
         'pip install -r requirements.txt',
@@ -832,7 +886,7 @@ CugaAgent → get_review_summary("Mist Trail", "Yosemite")
     tools: ['lookup_movie()', 'save_preference()', 'get_preferences()', 'save_recommendations()'],
     demoPath: 'apps/movie_recommender',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY'],
       setup: [
         'cd apps/movie_recommender',
         'pip install -r requirements.txt',
@@ -841,7 +895,7 @@ CugaAgent → get_review_summary("Mist Trail", "Yosemite")
     },
     architecture:
       'FastAPI serves the single-page UI. POST /ask → CugaAgent uses save_preference to record genres, liked/disliked films, actors, directors, and moods; get_preferences recalls the full profile; lookup_movie verifies details via Wikipedia; save_recommendations persists the structured card list. GET /session/{thread_id} returns the live profile and recommendation cards.',
-    diagram: `python main.py  →  http://127.0.0.1:8072
+    diagram: `python main.py  →  http://127.0.0.1:18806
 
 User: "I love Inception and The Dark Knight"
       │  POST /ask
@@ -888,7 +942,7 @@ Recommendation cards rendered in the right panel`,
     tools: ['fetch_webpage()', 'fetch_webpage_links()'],
     demoPath: 'apps/webpage_summarizer',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY'],
       setup: [
         'cd apps/webpage_summarizer',
         'pip install -r requirements.txt',
@@ -944,7 +998,7 @@ User: "List all links on https://news.ycombinator.com"
     tools: ['check_python_syntax()', 'extract_code_metrics()', 'detect_language()'],
     demoPath: 'apps/code_reviewer',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY (or equivalent)'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY'],
       setup: [
         'cd apps/code_reviewer',
         'pip install -r requirements.txt',

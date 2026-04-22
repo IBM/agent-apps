@@ -144,6 +144,8 @@ except ImportError:
 
 
 def _web(port: int, provider: str | None = None, llm_model: str | None = None):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
     import uvicorn
     from fastapi import FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
@@ -153,17 +155,47 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     from agent import VideoQAAgent
+    import index as idx
     _agent = VideoQAAgent(provider=provider, model=llm_model)
+    _executor = ThreadPoolExecutor(max_workers=1)
+
+    # Job state for async transcription polling
+    _job: dict = {"status": "idle", "error": None, "result": None}
+
+    def _load_sync(video_path: str, whisper_model: str):
+        import transcriber as tr
+        segments = tr.transcribe(video_path, model_size=whisper_model)
+        idx.index_segments(video_path, segments)
+        _agent._video_path_ref["path"]     = video_path
+        _agent._video_path_ref["segments"] = segments
+        return segments
 
     @app.post("/load")
     async def load(req: LoadReq):
-        try:
-            import transcriber as tr
-            segments = tr.transcribe(req.video_path, model_size=req.whisper_model)
-            duration = segments[-1]["end"] if segments else 0
-            return {"segments_count": len(segments), "duration_fmt": tr.fmt_time(duration), "video_path": req.video_path}
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        if _job["status"] == "running":
+            raise HTTPException(status_code=409, detail="Transcription already in progress.")
+        _job.update(status="running", error=None, result=None)
+
+        def _run():
+            try:
+                segments = _load_sync(req.video_path, req.whisper_model)
+                import transcriber as tr
+                duration = segments[-1]["end"] if segments else 0
+                _job.update(status="done", result={
+                    "segments_count": len(segments),
+                    "duration_fmt": tr.fmt_time(duration),
+                    "video_path": req.video_path,
+                })
+            except Exception as exc:
+                _job.update(status="error", error=str(exc))
+
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(_executor, _run)
+        return {"status": "running"}
+
+    @app.get("/load/status")
+    def load_status():
+        return _job
 
     @app.post("/ask")
     async def ask(req: AskReq):
@@ -262,14 +294,18 @@ button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
 
 <div class="card">
   <label>Video file</label>
+  <p style="font-size:12px;color:#6b6b7e;margin-bottom:8px">
+    Copy your file to <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">apps/video_qa/videos/</code>
+    on the host, then enter <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">/videos/filename.mp4</code> below.
+  </p>
   <div class="row">
-    <input id="videoPath" type="text" placeholder="/path/to/meeting.mp4 or .mov .m4a .wav …" />
+    <input id="videoPath" type="text" placeholder="/videos/meeting.mp4" />
   </div>
   <div class="row" style="margin-top:8px;align-items:center">
     <label style="margin:0;white-space:nowrap">Whisper model</label>
     <select id="modelSize" style="width:auto;flex:0 0 auto">
-      <option value="tiny">tiny (fastest)</option>
-      <option value="base" selected>base (recommended)</option>
+      <option value="tiny" selected>tiny (fastest)</option>
+      <option value="base">base</option>
       <option value="small">small</option>
       <option value="medium">medium</option>
       <option value="large-v3">large-v3 (most accurate)</option>
@@ -320,17 +356,35 @@ async function loadVideo() {
   try {
     const res = await fetch('/load', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:path,whisper_model:model})})
     if (!res.ok) throw new Error(await res.text())
-    const data = await res.json()
-    pill.className = 'status-pill status-ok'
-    pill.textContent = `✓ ${data.segments_count} segments · ${data.duration_fmt}`
-    document.getElementById('askBtn').disabled = false
-    loaded = true
-    await loadSegments()
+    // Poll for completion — /load returns immediately, transcription runs in background
+    while (true) {
+      await new Promise(r => setTimeout(r, 3000))
+      let poll
+      try { poll = await fetch('/load/status').then(r => r.json()) }
+      catch(e) { throw new Error('Server became unreachable. It may have run out of memory — try the "tiny" model.') }
+      if (poll.status === 'done') {
+        const data = poll.result
+        pill.className = 'status-pill status-ok'
+        pill.textContent = `✓ ${data.segments_count} segments · ${data.duration_fmt}`
+        document.getElementById('askBtn').disabled = false
+        loaded = true
+        await loadSegments()
+        break
+      } else if (poll.status === 'error') {
+        throw new Error(poll.error)
+      }
+      // still running — update elapsed hint
+      const elapsed = Math.round((Date.now() - loadStart) / 1000)
+      pill.textContent = `⏳ Transcribing… ${elapsed}s`
+    }
   } catch(err) {
     pill.className = 'status-pill status-none'
     pill.textContent = 'Error: ' + err.message
   } finally { btn.disabled = false; btn.textContent = 'Transcribe' }
 }
+let loadStart = 0
+const _origLoad = loadVideo
+loadVideo = async function() { loadStart = Date.now(); return _origLoad() }
 
 async function loadSegments() {
   const res = await fetch('/segments')

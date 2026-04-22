@@ -60,6 +60,16 @@ brew install ffmpeg       # for .mp4, .mov, .mkv files
 python run.py meeting.mp4
 ```
 
+### Using the Docker web UI
+
+Videos must be placed in `apps/video_qa/videos/` on the host. That directory
+is mounted read-only at `/videos` inside the container.
+
+```bash
+cp ~/Downloads/meeting.mp4 apps/video_qa/videos/
+# Then enter /videos/meeting.mp4 in the UI
+```
+
 ---
 
 ## How Files Are Processed

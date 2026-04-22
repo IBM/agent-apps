@@ -44,7 +44,7 @@ from pydantic import BaseModel
 from cuga.sdk import CugaAgent
 from llm import create_llm
 
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # ---------------------------------------------------------------------------
 # App
