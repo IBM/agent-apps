@@ -9,6 +9,8 @@ import {
   type Category,
 } from '../data/usecases'
 
+const STARRED_IDS = new Set(['deck-forge', 'drop-summarizer', 'smart-todo', 'video-qa'])
+
 const TYPE_CONFIG: Record<UseCaseType, { label: string; icon: string; activeCls: string }> = {
   'event-driven': { label: 'Event-driven', icon: '⚡', activeCls: 'bg-amber-500 text-white border-amber-500' },
   'documents':    { label: 'Documents',    icon: '📄', activeCls: 'bg-cyan-500 text-white border-cyan-500' },
@@ -33,7 +35,7 @@ const TYPE_BADGE_CLS: Record<UseCaseType, string> = {
 function TypeBadge({ type }: { type: UseCaseType }) {
   const { label, icon } = TYPE_CONFIG[type]
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded font-medium border ${TYPE_BADGE_CLS[type]}`}>
+    <span className={`text-sm px-2 py-0.5 rounded font-medium border ${TYPE_BADGE_CLS[type]}`}>
       {icon} {label}
     </span>
   )
@@ -140,45 +142,89 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
       <table className="w-full">
         <thead>
           <tr className="border-b border-tborder bg-tsurf2">
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-5 py-3 w-6">#</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3">Use Case</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3 hidden md:table-cell">Type</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3 hidden lg:table-cell">Category</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3">Status</th>
-            <th className="px-3 py-3 w-10"></th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-5 py-3.5 w-6">#</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5">Use Case</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden md:table-cell">Type</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden lg:table-cell">Category</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden xl:table-cell">Tools</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden xl:table-cell">ENV Vars</th>
+            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5">Status</th>
+            <th className="px-3 py-3.5 w-10"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-tb2">
           {filtered.map((uc, i) => {
             const statusInfo = STATUS_LABELS[uc.status]
             const catInfo = CATEGORIES[uc.category]
+            const visibleTools = uc.tools.slice(0, 3)
+            const extraTools = uc.tools.length - visibleTools.length
+            const UNIVERSAL_VARS = ['LLM_PROVIDER', 'LLM_MODEL', 'RITS_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']
+            const appEnvs = uc.howToRun.envVars.filter(v => !UNIVERSAL_VARS.includes(v))
+            const visibleEnvs = appEnvs.slice(0, 3)
+            const extraEnvs = appEnvs.length - visibleEnvs.length
             return (
               <tr
                 key={uc.id}
                 onClick={() => navigate(`/use-case/${uc.id}`)}
                 className="hover:bg-tsurf2 cursor-pointer transition-colors group"
               >
-                <td className="px-5 py-3.5 text-t4 text-sm font-mono">{i + 1}</td>
-                <td className="px-3 py-3.5">
-                  <div className="font-medium text-t1 text-sm group-hover:text-indigo-500 transition-colors">
-                    {uc.name}
+                <td className="px-5 py-4 text-t4 text-sm font-mono">{i + 1}</td>
+                <td className="px-3 py-4">
+                  <div className="font-semibold text-t1 text-base group-hover:text-indigo-500 transition-colors">
+                    {uc.name}{STARRED_IDS.has(uc.id) && <span className="text-amber-500 ml-1 font-bold">*</span>}
                   </div>
-                  <div className="text-xs text-t3 mt-0.5">{uc.tagline}</div>
+                  <div className="text-sm text-t3 mt-0.5">{uc.tagline}</div>
                 </td>
-                <td className="px-3 py-3.5 hidden md:table-cell">
+                <td className="px-3 py-4 hidden md:table-cell">
                   <TypeBadge type={uc.type} />
                 </td>
-                <td className="px-3 py-3.5 hidden lg:table-cell">
-                  <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-tsurf2 text-t3 border border-tborder">
+                <td className="px-3 py-4 hidden lg:table-cell">
+                  <span className="text-sm px-2 py-0.5 rounded-full font-medium bg-tsurf2 text-t3 border border-tborder">
                     {catInfo.label}
                   </span>
                 </td>
-                <td className="px-3 py-3.5">
-                  <span className="text-xs">
+                <td className="px-3 py-4 hidden xl:table-cell">
+                  {uc.tools.length === 0 ? (
+                    <span className="text-sm text-t4">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {visibleTools.map((t) => (
+                        <span key={t} className="text-xs px-1.5 py-0.5 rounded font-mono bg-tsurf2 text-t3 border border-tborder whitespace-nowrap">
+                          {t}
+                        </span>
+                      ))}
+                      {extraTools > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-tsurf2 text-t4 border border-tborder">
+                          +{extraTools}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-4 hidden xl:table-cell">
+                  {uc.howToRun.envVars.length === 0 ? (
+                    <span className="text-sm text-t4">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {visibleEnvs.map((v) => (
+                        <span key={v} className="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">
+                          {v}
+                        </span>
+                      ))}
+                      {extraEnvs > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-tsurf2 text-t4 border border-tborder">
+                          +{extraEnvs}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-4">
+                  <span className="text-sm">
                     {STATUS_ICON[uc.status]} <span className={`text-${statusInfo.color}-500`}>{statusInfo.label}</span>
                   </span>
                 </td>
-                <td className="px-3 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                   {uc.comingSoon ? (
                     <span className="inline-block px-2.5 py-1 text-xs font-medium bg-tsurf2 text-t4 border border-tborder rounded-md whitespace-nowrap">
                       Coming soon
@@ -227,11 +273,6 @@ export default function Home() {
       {/* ── Hero ── */}
       <div className="mb-8">
         <h2 className="text-2xl font-semibold text-t1 mb-2">CUGA Apps</h2>
-        <p className="text-t3 text-sm max-w-2xl mb-5">
-          <span className="text-emerald-500 font-medium">Automated Pipelines</span> — agents that run on
-          schedules and react to system events. One I/O runtime, zero boilerplate.
-        </p>
-
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3 max-w-lg mb-6">
           <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
@@ -282,11 +323,35 @@ export default function Home() {
         <CategoryFilterChips value={filterCategory} onChange={setFilterCategory} />
       </div>
 
+      {/* ── Universal env vars note ── */}
+      <div className="mb-4 px-4 py-3 bg-tsurf border border-tborder rounded-xl">
+        <div className="text-sm font-semibold text-t2 mb-2.5">Required for all apps</div>
+        <div className="flex flex-col gap-2">
+          {[
+            { key: 'AGENT_SETTING_CONFIG', value: 'settings.rits.toml' },
+            { key: 'LLM_MODEL', value: 'gpt-oss-120b' },
+            { key: 'LLM_PROVIDER', value: 'rits' },
+          ].map(({ key, value }) => (
+            <div key={key} className="flex items-center gap-2">
+              <span className="font-mono text-sm px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">{key}</span>
+              <span className="text-t4 text-sm">=</span>
+              <span className="font-mono text-sm text-t2">{value}</span>
+            </div>
+          ))}
+          <div className="flex items-start gap-2">
+            <span className="font-mono text-sm px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">RITS_API_KEY</span>
+            <span className="text-t4 text-sm">=</span>
+            <span className="text-sm text-t3 italic">connect to TunnelAll VPN and get a key from <a href="http://rits.fmaas.res.ibm.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline not-italic">rits.fmaas.res.ibm.com</a></span>
+          </div>
+        </div>
+      </div>
+
       {/* ── Use cases table ── */}
       <UseCaseTable useCases={USE_CASES} {...tableProps} />
 
-      <p className="mt-4 text-xs text-t4">
+      <p className="mt-4 text-sm text-t4">
         Click any row to see architecture, run instructions, and how CUGA powers it.
+        {' '}<span className="text-amber-500 font-bold">*</span> highlighted demos
       </p>
     </div>
   )

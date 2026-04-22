@@ -48,6 +48,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Load shared .env from apps/ directory (does not override already-set vars)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_DEMOS_DIR / ".env")
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Supported file types
 # ---------------------------------------------------------------------------
@@ -307,6 +314,11 @@ class AskReq(BaseModel):
     thread_id: str = "default"
 
 
+class CredentialsReq(BaseModel):
+    box_config_path: str = ""
+    box_folder_id: str = ""
+
+
 def _web(port: int) -> None:
     import uvicorn
     from fastapi import FastAPI
@@ -318,7 +330,12 @@ def _web(port: int) -> None:
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_methods=["*"], allow_headers=["*"])
 
-    _agent = make_agent()
+    _agent_cache: list = []  # lazy singleton: populated on first /ask
+
+    def _get_agent():
+        if not _agent_cache:
+            _agent_cache.append(make_agent())
+        return _agent_cache[0]
 
     @app.post("/ask")
     async def api_ask(req: AskReq):
@@ -326,7 +343,7 @@ def _web(port: int) -> None:
         if not q:
             return JSONResponse({"error": "Empty question"}, status_code=400)
         try:
-            result = await _agent.invoke(q, thread_id=req.thread_id)
+            result = await _get_agent().invoke(q, thread_id=req.thread_id)
             return {"answer": result.answer}
         except Exception as exc:
             log.error("Agent error: %s", exc)
@@ -338,15 +355,29 @@ def _web(port: int) -> None:
         box_ok = bool(config_path and Path(config_path).exists())
         return {
             "box_configured": box_ok,
+            "box_config_path": config_path,
             "folder_id": os.getenv("BOX_FOLDER_ID", "0"),
         }
+
+    @app.post("/settings/credentials")
+    async def api_credentials(req: CredentialsReq):
+        if req.box_config_path and not req.box_config_path.startswith("•"):
+            os.environ["BOX_CONFIG_PATH"] = req.box_config_path
+            # reset agent so it picks up the new config on next /ask
+            _agent_cache.clear()
+        if req.box_folder_id:
+            os.environ["BOX_FOLDER_ID"] = req.box_folder_id
+            _agent_cache.clear()
+        config_path = os.getenv("BOX_CONFIG_PATH", "")
+        box_ok = bool(config_path and Path(config_path).exists())
+        return {"ok": True, "box_configured": box_ok}
 
     @app.get("/", response_class=HTMLResponse)
     async def ui():
         return HTMLResponse(_HTML)
 
-    print(f"\n  Box Document Q&A  →  http://127.0.0.1:{port}\n")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    print(f"\n  Box Document Q&A  →  http://localhost:{port}\n")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,7 @@ services:
       - smart_todo_data:/app/apps/smart_todo
       - deck_forge_outputs:/app/apps/deck_forge/outputs
       - ./apps/video_qa/videos:/videos:ro
+      - ./apps/deck_forge/sample_data:/app/apps/deck_forge/sample_data
     depends_on:
       - phoenix
 

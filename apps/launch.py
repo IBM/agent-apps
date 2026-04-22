@@ -92,6 +92,7 @@ APPS: list[dict] = [
     dict(name="wiki_dive",          dir="wiki_dive",          default_port=18809, cmd=_python_cmd()),
     dict(name="ibm_cloud_advisor",  dir="ibm_cloud_advisor",  default_port=18812, cmd=_python_cmd()),
     dict(name="ibm_docs_qa",        dir="ibm_docs_qa",        default_port=18813, cmd=_python_cmd()),
+    dict(name="box_qa",             dir="box_qa",             default_port=18810, cmd=_python_cmd()),
     # ── To add a new app, copy one line above and adjust the fields ──────────
 ]
 

@@ -443,7 +443,7 @@ SMTP email → ALERT_TO`,
     category: 'content',
     status: 'working',
     channels: ['EmailChannel'],
-    tools: [],
+    tools: ['transcribe_audio()', 'save_journal_entry()', 'list_entries()', 'list_dates()'],
     demoPath: 'apps/voice_journal',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'OPENAI_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'DIGEST_TO'],

@@ -267,9 +267,11 @@
     <div>
       <div class="section-label">Source</div>
       <label for="inp-dir">Directory path</label>
-      <input type="text" id="inp-dir"
-        placeholder="/path/to/your/documents"
-        value="" />
+      <input type="text" id="inp-dir" placeholder="Loading…" value="" />
+      <div style="margin-top:6px; font-size:0.82rem; color:var(--text); opacity:0.75; line-height:1.6">
+        Drop your files into the <code style="font-size:0.8rem; background:rgba(255,255,255,0.1); padding:1px 5px; border-radius:3px">sample_data/</code> folder above, then click Generate.<br>
+        <span style="color:#60a5fa">Supported:</span> PDF · PPTX · MD · TXT · MP3 · WAV · M4A · MP4 · MOV · WEBM · AVI
+      </div>
     </div>
 
     <div>
@@ -354,6 +356,12 @@
       } else {
         label.textContent = 'no LLM detected';
       }
+      // Set the directory input to the real sample_data path on this machine
+      if (r.sample_data_path) {
+        const dirInput = document.getElementById('inp-dir');
+        dirInput.value = r.sample_data_path;
+        dirInput.placeholder = r.sample_data_path;
+      }
       // Enable CugaAgent button if the SDK is installed
       const cugaBtn    = document.getElementById('btn-cuga');
       const cugaStatus = document.getElementById('cuga-status');
@@ -407,6 +415,15 @@
     }
 
     if (d.type === 'directory_scanned') {
+      if (d.file_count === 0) {
+        addLog('error', '❌', `No supported files found in that directory.${d.skipped ? ` (${d.skipped} unsupported file(s) ignored)` : ''}<br>
+          <span class="meta">Supported formats: PDF · PPTX · MD · TXT · MP3 · WAV · M4A · MP4 · MOV · WEBM · AVI<br>
+          Drop your files into <code>apps/deck_forge/sample_data/</code> in the repo and try again.</span>`);
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('btn-generate').disabled = false;
+        if (_es) { _es.close(); _es = null; }
+        return;
+      }
       const files = (d.files || []).map(f =>
         `<span style="color:var(--muted)">[${f.type}]</span> ${esc(f.name)}`
       ).join(' &nbsp;·&nbsp; ');

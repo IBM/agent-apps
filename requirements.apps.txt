@@ -44,6 +44,7 @@ sentence-transformers
 
 # ── deck_forge ────────────────────────────────────────────────
 python-pptx
+pdfplumber
 
 # ── stock_alert ───────────────────────────────────────────────
 # (uses requests, already listed above)
