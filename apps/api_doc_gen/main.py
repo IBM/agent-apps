@@ -321,6 +321,10 @@ class LoadSpecReq(BaseModel):
     raw: str
 
 
+class LoadSpecUrlReq(BaseModel):
+    url: str
+
+
 # ---------------------------------------------------------------------------
 # Web app
 # ---------------------------------------------------------------------------
@@ -378,6 +382,27 @@ def _web(port: int) -> None:
     async def api_upload_spec(file: UploadFile = File(...)):
         raw = (await file.read()).decode("utf-8", errors="replace")
         result = _load_spec(raw)
+        if "error" in result:
+            return JSONResponse(result, status_code=400)
+        return result
+
+    @app.post("/load-spec-url")
+    async def api_load_spec_url(req: LoadSpecUrlReq):
+        import httpx
+        url = req.url.strip()
+        if not url:
+            return JSONResponse({"error": "URL is required"}, status_code=400)
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+                r = await client.get(url)
+            if r.status_code >= 400:
+                return JSONResponse(
+                    {"error": f"Fetch failed: HTTP {r.status_code}"},
+                    status_code=400,
+                )
+        except httpx.HTTPError as exc:
+            return JSONResponse({"error": f"Fetch failed: {exc}"}, status_code=400)
+        result = _load_spec(r.text)
         if "error" in result:
             return JSONResponse(result, status_code=400)
         return result

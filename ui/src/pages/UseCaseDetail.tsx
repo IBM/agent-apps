@@ -5,13 +5,10 @@ import Badge from '../components/Badge'
 import CodeBlock from '../components/CodeBlock'
 
 const TYPE_CONFIG: Record<UseCaseType, { label: string; cls: string }> = {
-  'event-driven': { label: 'Event-driven', cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
-  'documents':    { label: 'Documents',    cls: 'bg-cyan-900/40 text-cyan-300 border border-cyan-700/50' },
-  'ppt':          { label: 'PPT',          cls: 'bg-orange-900/40 text-orange-300 border border-orange-700/50' },
-  'audio':        { label: 'Audio',        cls: 'bg-pink-900/40 text-pink-300 border border-pink-700/50' },
-  'video':        { label: 'Video',        cls: 'bg-violet-900/40 text-violet-300 border border-violet-700/50' },
-  'images':       { label: 'Images',       cls: 'bg-teal-900/40 text-teal-300 border border-teal-700/50' },
-  'other':        { label: 'Other',        cls: 'bg-gray-800/40 text-gray-300 border border-gray-600/50' },
+  'event-driven':          { label: 'Event-driven',          cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
+  'document-intelligence': { label: 'Document Intelligence', cls: 'bg-cyan-900/40 text-cyan-300 border border-cyan-700/50' },
+  'audio-video':           { label: 'Audio / Video',         cls: 'bg-violet-900/40 text-violet-300 border border-violet-700/50' },
+  'other':                 { label: 'Other',                 cls: 'bg-gray-800/40 text-gray-300 border border-gray-600/50' },
 }
 
 function CopyButton({ text }: { text: string }) {

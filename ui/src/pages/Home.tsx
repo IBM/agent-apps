@@ -17,23 +17,17 @@ const resolveUrl = (url: string | null): string | null => {
 }
 
 const TYPE_CONFIG: Record<UseCaseType, { label: string; icon: string; activeCls: string }> = {
-  'event-driven': { label: 'Event-driven', icon: '⚡', activeCls: 'bg-amber-500 text-white border-amber-500' },
-  'documents':    { label: 'Documents',    icon: '📄', activeCls: 'bg-cyan-500 text-white border-cyan-500' },
-  'ppt':          { label: 'PPT',          icon: '📊', activeCls: 'bg-orange-500 text-white border-orange-500' },
-  'audio':        { label: 'Audio',        icon: '🎙', activeCls: 'bg-pink-500 text-white border-pink-500' },
-  'video':        { label: 'Video',        icon: '🎬', activeCls: 'bg-violet-500 text-white border-violet-500' },
-  'images':       { label: 'Images',       icon: '🖼', activeCls: 'bg-teal-500 text-white border-teal-500' },
-  'other':        { label: 'Other',        icon: '✦',  activeCls: 'bg-t2 text-tsurf border-t2' },
+  'event-driven':          { label: 'Event-driven',          icon: '⚡', activeCls: 'bg-amber-500 text-white border-amber-500' },
+  'document-intelligence': { label: 'Document Intelligence', icon: '📄', activeCls: 'bg-cyan-500 text-white border-cyan-500' },
+  'audio-video':           { label: 'Audio / Video',         icon: '🎬', activeCls: 'bg-violet-500 text-white border-violet-500' },
+  'other':                 { label: 'Other',                 icon: '✦',  activeCls: 'bg-t2 text-tsurf border-t2' },
 }
 
 const TYPE_BADGE_CLS: Record<UseCaseType, string> = {
-  'event-driven': 'bg-amber-500/10 text-amber-600 border-amber-500/30',
-  'documents':    'bg-cyan-500/10 text-cyan-600 border-cyan-500/30',
-  'ppt':          'bg-orange-500/10 text-orange-600 border-orange-500/30',
-  'audio':        'bg-pink-500/10 text-pink-600 border-pink-500/30',
-  'video':        'bg-violet-500/10 text-violet-600 border-violet-500/30',
-  'images':       'bg-teal-500/10 text-teal-600 border-teal-500/30',
-  'other':        'bg-tsurf2 text-t3 border-tborder',
+  'event-driven':          'bg-amber-500/10 text-amber-600 border-amber-500/30',
+  'document-intelligence': 'bg-cyan-500/10 text-cyan-600 border-cyan-500/30',
+  'audio-video':           'bg-violet-500/10 text-violet-600 border-violet-500/30',
+  'other':                 'bg-tsurf2 text-t3 border-tborder',
 }
 
 function TypeBadge({ type }: { type: UseCaseType }) {
@@ -108,9 +102,10 @@ function CategoryFilterChips({
 }
 
 const STATUS_ICON: Record<Status, string> = {
-  working: '✅',
-  partial: '🔧',
-  gap: '❌',
+  working:       '✅',
+  partial:       '🔧',
+  'not-working': '🚫',
+  gap:           '❌',
 }
 
 // ── Use case table ────────────────────────────────────────────────────────────
@@ -267,9 +262,10 @@ export default function Home() {
   const visible = USE_CASES.filter((u) => !u.hidden)
 
   const counts = useMemo(() => ({
-    working: visible.filter((u) => u.status === 'working').length,
-    partial: visible.filter((u) => u.status === 'partial').length,
-    gap:     visible.filter((u) => u.status === 'gap').length,
+    working:      visible.filter((u) => u.status === 'working').length,
+    partial:      visible.filter((u) => u.status === 'partial').length,
+    notWorking:   visible.filter((u) => u.status === 'not-working').length,
+    gap:          visible.filter((u) => u.status === 'gap').length,
   }), [])
 
   const tableProps = { search, filterStatus, filterType, filterCategory }
@@ -283,7 +279,7 @@ export default function Home() {
         <p className="text-base text-t3 mb-8">AI-powered demo apps built on the CUGA agent framework</p>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 max-w-2xl">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 max-w-3xl">
           <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-5">
             <div className="text-4xl font-bold text-emerald-500 mb-1">{counts.working}</div>
             <div className="text-sm font-medium text-emerald-600/80">Working demos</div>
@@ -291,6 +287,10 @@ export default function Home() {
           <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-5">
             <div className="text-4xl font-bold text-amber-500 mb-1">{counts.partial}</div>
             <div className="text-sm font-medium text-amber-600/80">Partial / setup needed</div>
+          </div>
+          <div className="bg-orange-500/10 border border-orange-500/25 rounded-2xl p-5">
+            <div className="text-4xl font-bold text-orange-500 mb-1">{counts.notWorking}</div>
+            <div className="text-sm font-medium text-orange-600/80">Not working</div>
           </div>
           <div className="bg-tsurf2 border border-tborder rounded-2xl p-5">
             <div className="text-4xl font-bold text-t3 mb-1">{counts.gap}</div>
@@ -343,6 +343,7 @@ export default function Home() {
             <option value="all">All statuses</option>
             <option value="working">Working</option>
             <option value="partial">Partial</option>
+            <option value="not-working">Not working</option>
             <option value="gap">Gap</option>
           </select>
           {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all') && (

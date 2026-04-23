@@ -1300,10 +1300,15 @@ async function loadFromUrl() {
   const url = document.getElementById('specUrl').value.trim()
   if (!url) return
   try {
-    const r = await fetch(url)
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    const raw = await r.text()
-    await loadSpecRaw(raw)
+    const r = await fetch('/load-spec-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    })
+    const d = await r.json()
+    if (d.error) { showToast(d.error, 'error'); return }
+    await refreshSpecInfo()
+    showToast(`Loaded: ${d.title}`)
   } catch(e) {
     showToast('Failed: ' + e.message, 'error')
   }

@@ -1,26 +1,15 @@
-export type Status = 'working' | 'partial' | 'gap'
-export type Category =
-  | 'monitoring'
-  | 'communication'
-  | 'productivity'
-  | 'devtools'
-  | 'content'
-  | 'documents'
-  | 'finance'
-  | 'infrastructure'
+export type Status = 'working' | 'partial' | 'not-working' | 'gap'
+export type Category = 'personal' | 'enterprise'
 
 export type Surface = 'gateway' | 'pipeline'
 
 /**
- * event-driven   — triggered by time (CronChannel) or external events
- *                  (WebhookChannel, IMAPChannel, RssChannel, CugaWatcher).
- * multimodal     — involves non-text data: audio/voice (AudioChannel,
- *                  TTSChannel, Whisper), images (vision, DALL-E), or
- *                  documents (DoclingChannel / PDF).
- * both           — event-driven trigger AND multimodal data processing.
- * conversational — real-time, human-in-loop, text-based, on-demand.
+ * event-driven          — triggered by time, RSS, file drops, or other events; runs in the background.
+ * document-intelligence — extracts and reasons over documents (PDF, DOCX, slides, etc.) or images.
+ * audio-video           — transcribes/processes audio or video.
+ * other                 — on-demand conversational/interactive apps.
  */
-export type UseCaseType = 'event-driven' | 'documents' | 'ppt' | 'audio' | 'video' | 'images' | 'other'
+export type UseCaseType = 'event-driven' | 'document-intelligence' | 'audio-video' | 'other'
 
 export interface UseCase {
   id: string
@@ -71,12 +60,12 @@ export const USE_CASES: UseCase[] = [
     tagline: 'Ask market questions or set a threshold alert — browser UI, live data',
     description:
       'A browser UI with two panels. Market Query: type any symbol and ask a free-form question — the agent fetches live data and answers with prices and % changes highlighted. Price Watch: configure a background monitor (symbol, threshold, above/below); a custom asyncio loop checks every 5 minutes and emails you when crossed. Crypto uses CoinGecko (no key needed); stocks require an Alpha Vantage key.',
-    category: 'monitoring',
+    category: 'personal',
     type: 'event-driven',
     surface: 'pipeline',
     status: 'working',
     channels: ['EmailChannel'],
-    tools: ['make_market_tools()'],
+    tools: ['get_crypto_price()', 'get_stock_quote()'],
     demoPath: 'apps/stock_alert',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ALPHA_VANTAGE_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
@@ -131,7 +120,7 @@ asyncio task (every 5 min)
     type: 'event-driven',
     description:
       'A browser UI with four panels: Live Metrics (CPU/RAM/Disk/load gauges, colour-coded, auto-refreshed every 15s), Chat (ask the DevOps agent anything about system health), Alert Log (background asyncio monitor logs threshold breaches with full diagnoses), and Alert Settings (configure poll interval, cooldown, and thresholds — persisted to .store.json). No CugaHost, no channels — just CugaAgent + psutil + FastAPI.',
-    category: 'infrastructure',
+    category: 'enterprise',
     surface: 'pipeline',
     status: 'working',
     channels: [],
@@ -196,10 +185,10 @@ Alert entry: "python train.py consuming 88% CPU since 14:02"`,
     surface: 'pipeline',
     description:
       'A browser UI with two panels. Feed Query: ask any question over your configured RSS feeds — the agent fetches live articles and answers in plain language, with an Email this button to send the response to your inbox. Scheduled Alerts: configure keyword monitors that run hourly or daily; the agent searches your feeds and emails you when matches are found. State (feeds, email settings, alerts) persists in .store.json across restarts.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: ['EmailChannel'],
-    tools: ['make_feed_tools()'],
+    tools: ['fetch_feed()', 'search_feeds()'],
     demoPath: 'apps/newsletter',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
@@ -251,14 +240,14 @@ SMTP email → ALERT_TO`,
     id: 'video-qa',
     name: 'Video Q&A',
     tagline: 'Transcribe a video, then ask questions with exact timestamps',
-    type: 'video',
+    type: 'audio-video',
     surface: 'pipeline',
     description:
       'Load a video or audio file and ask questions about it in natural language. faster-whisper transcribes locally (cached on disk after the first run), sentence-transformers embeds each segment into ChromaDB, and CugaAgent answers with bold timestamps. Runs as a CLI REPL or a browser UI with a searchable transcript panel.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: [],
-    tools: ['transcribe_video()', 'search_transcript()', 'get_segment_at_time()'],
+    tools: ['transcribe_audio()', 'search_transcript()', 'get_segment_at_time()'],
     demoPath: 'apps/video_qa',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
@@ -313,14 +302,14 @@ CugaAgent (guided by skills/video_qa.md)
     id: 'drop-summarizer',
     name: 'Drop Summarizer',
     tagline: 'Drop any file into the inbox — get a plain-English summary instantly',
-    type: 'documents',
+    type: 'document-intelligence',
     surface: 'pipeline',
     description:
-      'A browser UI with an upload panel and a summary feed. Drop any .txt, .md, .pdf, or image file into the inbox folder (or upload via the browser) — the agent uses an extract_document tool (docling for PDF/images) to read each file, summarises it, and the result appears instantly in the feed. Click any file to ask follow-up questions via get_document_content. Optional keyword email alerts trigger when a summary matches configured terms. Summaries stored in SQLite.',
-    category: 'documents',
+      'A browser UI with an upload panel and a summary feed. Drop any .txt, .md, .pdf, or image file into the inbox folder (or upload via the browser) — the app extracts text (docling in a subprocess for PDF/images; plain read for TXT/MD), passes it to the agent for summarisation, and the result appears instantly in the feed. Click any file to ask follow-up questions over the stored content. Optional keyword email alerts trigger when a summary matches configured terms. Summaries stored in SQLite.',
+    category: 'personal',
     status: 'working',
     channels: [],
-    tools: ['extract_document', 'get_document_content'],
+    tools: [],
     demoPath: 'apps/drop_summarizer',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
@@ -332,17 +321,17 @@ CugaAgent (guided by skills/video_qa.md)
       command: 'python main.py',
     },
     architecture:
-      'FastAPI serves the single-page UI. Background watcher: asyncio loop polls ./inbox/ every N seconds; on new file, agent calls extract_document tool (.txt/.md read directly; .pdf/images via docling), then summarises. App stores content + summary in SQLite. Chat: POST /ask → for specific files, agent calls get_document_content tool; for general queries, recent summaries injected as context. Keyword alert check runs after summarisation — pure string match, no LLM.',
+      'FastAPI serves the single-page UI. Background watcher: asyncio loop polls ./inbox/ every N seconds; on new file, the app extracts text (.txt/.md read directly; .pdf/images via docling running in a subprocess so OOM kills do not crash the server), then passes the content to the agent for summarisation. App stores content + summary in SQLite. Chat: POST /ask → for specific files, the stored content is injected into the prompt; for general queries, recent summaries are injected as context. Keyword alert check runs after summarisation — pure string match, no LLM.',
     diagram: `python main.py  →  http://127.0.0.1:18794
 
 File lands in ./inbox/report.pdf
       │  (background watcher polls every 15s)
       ▼
-CugaAgent: extract_document(file_path)
-      │  .txt/.md → read text
-      │  .pdf/image → docling OCR/parse
+App extracts text
+      │  .txt/.md → read directly
+      │  .pdf/image → docling subprocess
       ▼
-CugaAgent: summarize → summary
+CugaAgent (content injected): summarise → summary
       │
       ▼
 SQLite: store { filename, summary, full_content }
@@ -352,15 +341,15 @@ UI: summary card appears in feed
 
 Chat panel (click any file to focus):
 User: "What were the key risks in this report?"
-      │  POST /ask
+      │  POST /ask  (file content injected into prompt)
       ▼
-CugaAgent: get_document_content(filename) → answer
+CugaAgent → answer
 
 Keyword alert (post-summary, no LLM):
 summary contains "critical" → SMTP email → ALERT_TO`,
     cugaContribution: [
-      'Agent uses extract_document tool to drive docling extraction — the LLM decides when and how to extract, not the app',
-      'Agent uses get_document_content tool for Q&A — retrieves stored content on demand instead of having it injected by the app',
+      'Docling extraction runs in a subprocess — large/complex PDFs cannot OOM-kill the server',
+      'Agent only sees clean extracted text — no token waste on tool plumbing or HTML noise',
       'Background asyncio watcher replaces inotify/polling boilerplate — file arrives, summary appears automatically',
       'Persistent SQLite store — summaries and full content survive restarts; click any past file to resume Q&A',
     ],
@@ -383,7 +372,7 @@ summary contains "critical" → SMTP email → ALERT_TO`,
     surface: 'pipeline',
     description:
       'A browser UI for scheduling recurring web research tasks. Add topics with hourly / daily / weekly cadences — the background scheduler runs overdue topics every 5 minutes using Tavily, logs results to SQLite, and optionally emails them. Also supports ad-hoc searches via the chat panel. Research history persists across restarts.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: ['EmailChannel'],
     tools: ['web_search()'],
@@ -439,11 +428,11 @@ SMTP email → ALERT_TO`,
     id: 'voice-journal',
     name: 'Voice Journal',
     tagline: 'Drop a voice memo — Whisper transcribes, agent structures, SQLite stores',
-    type: 'audio',
+    type: 'audio-video',
     surface: 'pipeline',
     description:
       'A personal journal that accepts audio recordings (.m4a, .mp3, .wav) and text entries via a browser UI. OpenAI Whisper API transcribes audio automatically (local Whisper as fallback). The agent structures each entry and stores it in SQLite alongside a Markdown file. A background watcher monitors ./inbox for new files. A configurable email digest sends a summary of recent entries on schedule.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: ['EmailChannel'],
     tools: ['transcribe_audio()', 'save_journal_entry()', 'list_entries()', 'list_dates()'],
@@ -508,10 +497,10 @@ CugaAgent → "You mentioned deadlines and team collaboration…"`,
     surface: 'pipeline',
     description:
       'A conversational todo manager with a browser UI. Add tasks in natural language ("remind me to review the PR before EOD"), set due dates, and get email reminders when items come due. Tasks stored in SQLite survive restarts. The tabbed board shows Todos, Reminders, Notes, and Done.',
-    category: 'productivity',
+    category: 'personal',
     status: 'working',
     channels: ['EmailChannel'],
-    tools: [],
+    tools: ['save_todo()', 'list_todos()', 'mark_done()'],
     demoPath: 'apps/smart_todo',
     howToRun: {
       envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
@@ -569,10 +558,10 @@ SMTP email → ALERT_TO: "Reminder: Review the PR is due now"`,
     surface: 'gateway',
     description:
       'A conversational travel planning agent with a browser UI. Describe your trip and the agent builds a day-by-day itinerary using live data: Wikipedia city overviews, real-time weather (wttr.in), geocoding (Nominatim/OSM), points of interest (OpenTripMap), and web search (Tavily). Also showcases CugaAgent vs LangGraph ReAct side-by-side on the same tools — same task, two architectures, one UI.',
-    category: 'productivity',
+    category: 'personal',
     status: 'working',
     channels: [],
-    tools: ['get_city_overview()', 'get_weather()', 'search_attractions()', 'web_search()'],
+    tools: ['get_city_overview()', 'get_weather()', 'get_coordinates()', 'search_attractions()', 'search_web()'],
     demoPath: 'apps/travel_planner',
     howToRun: {
       envVars: ['ANTHROPIC_API_KEY', 'TAVILY_API_KEY', 'OPENTRIPMAP_API_KEY'],
@@ -622,11 +611,11 @@ CugaAgent (full plan in context) → updated itinerary`,
     id: 'deck-forge',
     name: 'Deck Forge',
     tagline: 'Point at a folder of docs, PDFs, and recordings — get a polished slide deck',
-    type: 'ppt',
+    type: 'document-intelligence',
     surface: 'pipeline',
     description:
       'An AI presentation architect powered by a LangGraph ReAct agent and a RAG knowledge base. Give it a local directory (PDFs, slides, markdown, recordings) and a topic — the agent discovers every file, extracts and indexes the content with ChromaDB + sentence-transformers, reasons about a narrative arc, and builds a coherent slide deck with speaker notes. Output: a .pptx file and a structured Markdown report. Progress streams live to the browser via SSE.',
-    category: 'productivity',
+    category: 'enterprise',
     status: 'working',
     channels: [],
     tools: ['list_directory()', 'extract_and_index()', 'search_knowledge_base()', 'add_slide()', 'finalize()'],
@@ -688,11 +677,11 @@ SSE stream → browser: live progress per tool call`,
     id: 'youtube-research',
     name: 'YouTube Research',
     tagline: 'Research any topic via YouTube — find videos, fetch transcripts, synthesise with citations',
-    type: 'video',
+    type: 'audio-video',
     surface: 'gateway',
     description:
       'A browser UI for topic research powered by YouTube content. Topic mode: type a subject and the agent searches the web for relevant YouTube videos, fetches their transcripts, and synthesises findings organised by theme with citations and timestamps. URL mode: paste one or more YouTube links directly for instant summaries with key moments. Research history stored in SQLite.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: [],
     tools: ['web_search()', 'get_video_info()', 'get_transcript()'],
@@ -750,11 +739,11 @@ CugaAgent → get_video_info + get_transcript → summary with timestamps`,
     id: 'arch-diagram',
     name: 'Architecture Diagram Generator',
     tagline: 'Describe a system in plain English, get a rendered architecture diagram',
-    type: 'images',
+    type: 'document-intelligence',
     surface: 'gateway',
     description:
       'A browser UI that turns natural-language system descriptions into rendered architecture diagrams. The agent generates Mermaid.js code (flowcharts, sequence diagrams, ER diagrams, state diagrams) and the browser renders it as interactive SVG. Supports iterative refinement — ask the agent to add, remove, or change components and it updates the diagram. Optionally uses web search to research unfamiliar technologies before diagramming. Diagrams downloadable as SVG.',
-    category: 'devtools',
+    category: 'enterprise',
     status: 'working',
     channels: [],
     tools: ['web_search()'],
@@ -820,7 +809,7 @@ CugaAgent → updated diagram with cache node added`,
     surface: 'gateway',
     description:
       'A browser UI for exploring hiking trails. Type any location and the agent geocodes it, queries OpenStreetMap via the Overpass API for named hiking route relations, and presents trails filtered by difficulty and kid-friendliness. Click any trail name to view it on OpenStreetMap. Tap "Get Reviews" on any trail to get an AI-synthesised summary of hiker reviews from the web via Tavily.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: [],
     tools: ['geocode_location()', 'find_hikes()', 'get_review_summary()'],
@@ -883,7 +872,7 @@ CugaAgent → get_review_summary("Mist Trail", "Yosemite")
     surface: 'gateway',
     description:
       'A conversational movie recommendation agent with a browser UI. Tell it about films you enjoy, genres, favourite directors and actors, or your current mood — the agent builds a taste profile and recommends 5–8 films you will love. Movie details are verified via the Wikipedia REST API (no extra API key needed). Recommendations appear as cards in the right panel alongside a live view of your taste profile.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: [],
     tools: ['lookup_movie()', 'save_preference()', 'get_preferences()', 'save_recommendations()'],
@@ -939,7 +928,7 @@ Recommendation cards rendered in the right panel`,
     surface: 'gateway',
     description:
       'A browser UI that fetches and summarises any webpage you provide. Paste a URL into the chat and the agent retrieves the page, strips HTML boilerplate (scripts, nav, footers), extracts readable text, and returns a structured summary: title, source URL, 2–3 sentence overview, key topics as bullet points, important facts, and a bottom-line takeaway. Also lists hyperlinks found on the page on request.',
-    category: 'content',
+    category: 'personal',
     status: 'working',
     channels: [],
     tools: ['fetch_webpage()', 'fetch_webpage_links()'],
@@ -995,7 +984,7 @@ User: "List all links on https://news.ycombinator.com"
     surface: 'gateway',
     description:
       'An AI-powered code review tool with a browser UI. Paste a snippet or upload a source file (.py, .js, .ts, .java, .go, .rs, .cpp, .sql, .sh, and more) and choose a focus mode: Full Review, Security, Performance, Style, Bugs, Architecture, or Testability. The agent detects the language, validates Python syntax via AST, extracts code metrics (LOC, complexity, top-level definitions), and returns a structured review with severity-rated issues, concrete suggestions, and deeper insights. Ask follow-up questions about the loaded code without re-submitting. Session review history is collapsible and copyable.',
-    category: 'devtools',
+    category: 'enterprise',
     status: 'working',
     channels: [],
     tools: ['check_python_syntax()', 'extract_code_metrics()', 'detect_language()'],
@@ -1054,7 +1043,7 @@ CugaAgent (code injected as context) → refactoring walkthrough`,
     tagline: 'Research academic papers via arXiv and Semantic Scholar — no API key needed',
     description:
       'A browser UI for academic research. Type a topic and the agent searches both arXiv (CS, ML, physics, math, biology) and Semantic Scholar (broader coverage with citation counts), then synthesises findings across papers with inline citations. Paste an arXiv ID or URL directly for an instant structured summary: contributions, method, results, limitations. Ask follow-up questions like "what does this build on?" to fetch reference lists.',
-    category: 'productivity',
+    category: 'personal',
     type: 'other',
     surface: 'gateway',
     status: 'working',
@@ -1120,7 +1109,7 @@ CugaAgent
     tagline: 'Deep Wikipedia research — reads articles section by section, follows related links, synthesises with citations',
     description:
       'A browser UI for encyclopedic deep dives. Unlike a Wikipedia search that returns a snippet, Wiki Dive reads the full article section by section, follows "See Also" links to pull connected concepts, and synthesises a structured report with inline citations. Great for building mental models from first principles — complex topics, historical events, scientific concepts, philosophical ideas. No API keys required; uses Wikipedia\'s free public REST and action APIs.',
-    category: 'productivity',
+    category: 'personal',
     type: 'other',
     surface: 'gateway',
     status: 'working',
@@ -1179,12 +1168,12 @@ Synthesised report:
     id: 'box-qa',
     name: 'Box Document Q&A',
     tagline: 'Ask questions across documents stored in your Box cloud storage',
-    type: 'documents',
+    type: 'document-intelligence',
     surface: 'gateway',
     description:
       'A browser UI that connects to a Box folder and lets you ask natural-language questions across your documents. The agent lists files, fetches and extracts text from supported document types (PDF, DOCX, PPTX, XLSX, TXT, MD, CSV), and answers questions with citations to specific files and passages. Video/audio files are surfaced by name but noted as unsupported — a multimodal extension (Whisper transcription + keyframe vision) is planned for v2.',
-    category: 'documents',
-    status: 'working',
+    category: 'enterprise',
+    status: 'not-working',
     channels: [],
     tools: ['list_box_folder()', 'get_file_content()', 'search_box()'],
     demoPath: 'apps/box_qa',
@@ -1233,7 +1222,7 @@ Answer with citation:
     tagline: 'Track IBM Cloud release notes across services — scheduled digest, email alerts, ad-hoc chat',
     description:
       "A browser UI that monitors IBM Cloud service release notes and What's New announcements. Add services to your watch list (Code Engine, watsonx.ai, Event Streams, etc.), set a daily or weekly schedule, and the agent searches ibm.com and cloud.ibm.com via Tavily for recent changes. Meaningful updates appear in the Digest Log and are emailed automatically. Chat panel for ad-hoc questions like 'what changed in Cloud Object Storage this month?'",
-    category: 'infrastructure',
+    category: 'enterprise',
     type: 'event-driven',
     surface: 'pipeline',
     status: 'working',
@@ -1296,7 +1285,7 @@ SMTP digest → DIGEST_TO`,
     tagline: 'Describe what you want to build — get real IBM Cloud services, CLI commands, and cost hints',
     description:
       'A browser UI powered by the IBM Global Catalog public API (no IBM account required). Describe your use case in plain English and the agent searches the live IBM service catalog, recommends 3–7 IBM Cloud services with roles and integration points, and generates ibmcloud CLI commands to provision them. Supports iterative refinement: ask for HA, HIPAA compliance, Terraform output, or AWS-to-IBM mappings.',
-    category: 'infrastructure',
+    category: 'enterprise',
     type: 'other',
     surface: 'gateway',
     status: 'working',
@@ -1359,7 +1348,7 @@ ibmcloud CLI:
     tagline: 'Ask any IBM Cloud question — get a precise answer from real IBM documentation with source links',
     description:
       'A browser UI that answers IBM Cloud questions by searching and reading real IBM documentation. Ask anything: setup procedures, plan limits, service comparisons, config options, pricing. The agent searches ibm.com and cloud.ibm.com via Tavily, fetches the most relevant doc pages in full, and synthesises a precise answer with inline citations. Multi-turn: ask follow-up questions without re-submitting context.',
-    category: 'infrastructure',
+    category: 'enterprise',
     type: 'other',
     surface: 'gateway',
     status: 'working',
@@ -1419,11 +1408,11 @@ CugaAgent (previous context retained) → follow-up with comparison table`,
     id: 'api-doc-gen',
     name: 'API Doc Generator',
     tagline: 'Upload an OpenAPI spec and get human-readable docs with realistic examples in seconds',
-    type: 'documents',
+    type: 'document-intelligence',
     surface: 'gateway',
     description:
       'A browser UI that turns OpenAPI/Swagger specs into developer-friendly documentation. Upload a JSON or YAML spec, point to a URL, or pick from five built-in samples (Petstore, GitHub Issues, Stripe Payments, Slack Messaging, OpenWeather). The agent reads the spec endpoint by endpoint, resolves $ref schemas, and writes clear Markdown docs with realistic curl examples and example responses. Supports iterative refinement — ask for more examples, filter to specific endpoints, change tone, or generate a Postman collection structure.',
-    category: 'devtools',
+    category: 'enterprise',
     status: 'working',
     channels: [],
     tools: ['list_endpoints()', 'get_endpoint_details()', 'get_schema()'],
@@ -1489,20 +1478,15 @@ curl -X POST https://api.stripe.com/v1/charges \\
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {
-  monitoring: { label: 'Monitoring', color: 'blue' },
-  communication: { label: 'Communication', color: 'purple' },
-  productivity: { label: 'Productivity', color: 'green' },
-  devtools: { label: 'Dev Tools', color: 'orange' },
-  content: { label: 'Content', color: 'pink' },
-  documents: { label: 'Documents', color: 'cyan' },
-  finance: { label: 'Finance', color: 'yellow' },
-  infrastructure: { label: 'Infrastructure', color: 'red' },
+  personal:   { label: 'Personal Productivity', color: 'green' },
+  enterprise: { label: 'Enterprise',            color: 'indigo' },
 }
 
 export const STATUS_LABELS: Record<Status, { label: string; color: string }> = {
-  working: { label: 'Working', color: 'green' },
-  partial: { label: 'Partial', color: 'yellow' },
-  gap: { label: 'Gap', color: 'red' },
+  working:       { label: 'Working',     color: 'green' },
+  partial:       { label: 'Partial',     color: 'yellow' },
+  'not-working': { label: 'Not working', color: 'orange' },
+  gap:           { label: 'Gap',         color: 'red' },
 }
 
 export const SURFACES: Record<Surface, { label: string; tagline: string; color: string; icon: string }> = {

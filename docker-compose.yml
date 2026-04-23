@@ -27,7 +27,7 @@ services:
       context: .
       dockerfile: Dockerfile.apps
     restart: unless-stopped
-    mem_limit: 11g
+    mem_limit: 32g
     env_file:
       - ./apps/.env
     ports:
@@ -49,8 +49,11 @@ services:
       - "18807:18807"   # code_reviewer
       - "18808:18808"   # paper_scout
       - "18809:18809"   # wiki_dive
+      - "18810:18810"   # box_qa
+      - "18811:18811"   # api_doc_gen
       - "18812:18812"   # ibm_cloud_advisor
       - "18813:18813"   # ibm_docs_qa
+      - "18814:18814"   # ibm_whats_new
     environment:
       # LLM provider
       - LLM_PROVIDER

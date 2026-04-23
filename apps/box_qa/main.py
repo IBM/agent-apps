@@ -377,7 +377,7 @@ def _web(port: int) -> None:
         return HTMLResponse(_HTML)
 
     print(f"\n  Box Document Q&A  →  http://localhost:{port}\n")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 # ---------------------------------------------------------------------------
