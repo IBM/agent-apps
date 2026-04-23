@@ -68,5 +68,14 @@ python ibm_cloud_advisor/main.py --port 18812 &
 log "Starting ibm_docs_qa        on :18813"
 python ibm_docs_qa/main.py --port 18813 &
 
+log "Starting ibm_whats_new      on :18814"
+python ibm_whats_new/main.py --port 18814 &
+
+log "Starting box_qa             on :18810"
+python box_qa/main.py --port 18810 &
+
+log "Starting api_doc_gen        on :18811"
+python api_doc_gen/main.py --port 18811 &
+
 log "All apps launched. Waiting..."
 wait
