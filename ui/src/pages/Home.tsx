@@ -21,7 +21,6 @@ const TYPE_CONFIG: Record<UseCaseType, { label: string; icon: string; activeCls:
   'other':        { label: 'Other',        icon: '✦',  activeCls: 'bg-t2 text-tsurf border-t2' },
 }
 
-// Inline type badge (always displayed with its accent color)
 const TYPE_BADGE_CLS: Record<UseCaseType, string> = {
   'event-driven': 'bg-amber-500/10 text-amber-600 border-amber-500/30',
   'documents':    'bg-cyan-500/10 text-cyan-600 border-cyan-500/30',
@@ -35,7 +34,7 @@ const TYPE_BADGE_CLS: Record<UseCaseType, string> = {
 function TypeBadge({ type }: { type: UseCaseType }) {
   const { label, icon } = TYPE_CONFIG[type]
   return (
-    <span className={`text-sm px-2 py-0.5 rounded font-medium border ${TYPE_BADGE_CLS[type]}`}>
+    <span className={`text-sm px-2.5 py-1 rounded-md font-medium border ${TYPE_BADGE_CLS[type]}`}>
       {icon} {label}
     </span>
   )
@@ -52,8 +51,8 @@ function TypeFilterChips({
   onChange: (v: UseCaseType | 'all') => void
 }) {
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-xs text-t4 font-medium uppercase tracking-wider w-16 shrink-0">Type</span>
+    <div className="flex items-center gap-2.5 flex-wrap">
+      <span className="text-sm text-t4 font-semibold uppercase tracking-wider w-20 shrink-0">Type</span>
       {ALL_TYPES.map((t) => {
         const { label, icon, activeCls } = TYPE_CONFIG[t]
         const active = value === t
@@ -61,8 +60,8 @@ function TypeFilterChips({
           <button
             key={t}
             onClick={() => onChange(active ? 'all' : t)}
-            className={`text-xs px-2.5 py-1 rounded-full font-medium border transition-all ${
-              active ? activeCls : 'bg-tsurf border-tborder text-t3 hover:text-t2 hover:border-t3'
+            className={`text-sm px-3.5 py-1.5 rounded-full font-medium border transition-all ${
+              active ? activeCls : 'bg-tsurf border-tborder text-t3 hover:text-t1 hover:border-t2'
             }`}
           >
             {icon} {label}
@@ -81,18 +80,18 @@ function CategoryFilterChips({
   onChange: (v: Category | 'all') => void
 }) {
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-xs text-t4 font-medium uppercase tracking-wider w-16 shrink-0">Category</span>
+    <div className="flex items-center gap-2.5 flex-wrap">
+      <span className="text-sm text-t4 font-semibold uppercase tracking-wider w-20 shrink-0">Category</span>
       {ALL_CATEGORIES.map((cat) => {
         const active = value === cat
         return (
           <button
             key={cat}
             onClick={() => onChange(active ? 'all' : cat)}
-            className={`text-xs px-2.5 py-1 rounded-full font-medium border transition-all ${
+            className={`text-sm px-3.5 py-1.5 rounded-full font-medium border transition-all ${
               active
                 ? 'bg-indigo-600 text-white border-indigo-600'
-                : 'bg-tsurf border-tborder text-t3 hover:text-t2 hover:border-t3'
+                : 'bg-tsurf border-tborder text-t3 hover:text-t1 hover:border-t2'
             }`}
           >
             {CATEGORIES[cat].label}
@@ -134,31 +133,32 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
   })
 
   if (filtered.length === 0) {
-    return <div className="py-8 text-center text-t3 text-sm">No use cases match your filters.</div>
+    return <div className="py-12 text-center text-t3 text-base">No use cases match your filters.</div>
   }
 
+  const UNIVERSAL_VARS = ['LLM_PROVIDER', 'LLM_MODEL', 'RITS_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'AGENT_SETTING_CONFIG']
+
   return (
-    <div className="bg-tsurf border border-tborder rounded-xl overflow-hidden">
+    <div className="bg-tsurf border border-tborder rounded-2xl overflow-hidden shadow-sm">
       <table className="w-full">
         <thead>
-          <tr className="border-b border-tborder bg-tsurf2">
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-5 py-3.5 w-6">#</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5">Use Case</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden md:table-cell">Type</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden lg:table-cell">Category</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden xl:table-cell">Tools</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5 hidden xl:table-cell">ENV Vars</th>
-            <th className="text-left text-xs font-semibold text-t4 uppercase tracking-wider px-3 py-3.5">Status</th>
-            <th className="px-3 py-3.5 w-10"></th>
+          <tr className="border-b-2 border-tborder bg-tsurf2">
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-6 py-4 w-10">#</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4">Use Case</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4 hidden md:table-cell">Type</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4 hidden lg:table-cell">Category</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4 hidden xl:table-cell">Tools</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4 hidden xl:table-cell">ENV Vars</th>
+            <th className="text-left text-sm font-semibold text-t4 uppercase tracking-wider px-4 py-4">Status</th>
+            <th className="px-4 py-4 w-10"></th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-tb2">
+        <tbody className="divide-y divide-tborder">
           {filtered.map((uc, i) => {
             const statusInfo = STATUS_LABELS[uc.status]
             const catInfo = CATEGORIES[uc.category]
             const visibleTools = uc.tools.slice(0, 3)
             const extraTools = uc.tools.length - visibleTools.length
-            const UNIVERSAL_VARS = ['LLM_PROVIDER', 'LLM_MODEL', 'RITS_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']
             const appEnvs = uc.howToRun.envVars.filter(v => !UNIVERSAL_VARS.includes(v))
             const visibleEnvs = appEnvs.slice(0, 3)
             const extraEnvs = appEnvs.length - visibleEnvs.length
@@ -168,65 +168,65 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                 onClick={() => navigate(`/use-case/${uc.id}`)}
                 className="hover:bg-tsurf2 cursor-pointer transition-colors group"
               >
-                <td className="px-5 py-4 text-t4 text-sm font-mono">{i + 1}</td>
-                <td className="px-3 py-4">
-                  <div className="font-semibold text-t1 text-base group-hover:text-indigo-500 transition-colors">
-                    {uc.name}{STARRED_IDS.has(uc.id) && <span className="text-amber-500 ml-1 font-bold">*</span>}
+                <td className="px-6 py-5 text-t4 text-sm font-mono">{i + 1}</td>
+                <td className="px-4 py-5">
+                  <div className="font-semibold text-t1 text-lg group-hover:text-indigo-500 transition-colors leading-snug">
+                    {uc.name}{STARRED_IDS.has(uc.id) && <span className="text-amber-500 ml-1.5 font-bold">✦</span>}
                   </div>
-                  <div className="text-sm text-t3 mt-0.5">{uc.tagline}</div>
+                  <div className="text-sm text-t3 mt-1 leading-relaxed">{uc.tagline}</div>
                 </td>
-                <td className="px-3 py-4 hidden md:table-cell">
+                <td className="px-4 py-5 hidden md:table-cell">
                   <TypeBadge type={uc.type} />
                 </td>
-                <td className="px-3 py-4 hidden lg:table-cell">
-                  <span className="text-sm px-2 py-0.5 rounded-full font-medium bg-tsurf2 text-t3 border border-tborder">
+                <td className="px-4 py-5 hidden lg:table-cell">
+                  <span className="text-sm px-2.5 py-1 rounded-full font-medium bg-tsurf2 text-t3 border border-tborder">
                     {catInfo.label}
                   </span>
                 </td>
-                <td className="px-3 py-4 hidden xl:table-cell">
+                <td className="px-4 py-5 hidden xl:table-cell">
                   {uc.tools.length === 0 ? (
                     <span className="text-sm text-t4">—</span>
                   ) : (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {visibleTools.map((t) => (
-                        <span key={t} className="text-xs px-1.5 py-0.5 rounded font-mono bg-tsurf2 text-t3 border border-tborder whitespace-nowrap">
+                        <span key={t} className="text-xs px-2 py-1 rounded-md font-mono bg-tsurf2 text-t3 border border-tborder whitespace-nowrap">
                           {t}
                         </span>
                       ))}
                       {extraTools > 0 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-tsurf2 text-t4 border border-tborder">
+                        <span className="text-xs px-2 py-1 rounded-md bg-tsurf2 text-t4 border border-tborder">
                           +{extraTools}
                         </span>
                       )}
                     </div>
                   )}
                 </td>
-                <td className="px-3 py-4 hidden xl:table-cell">
-                  {uc.howToRun.envVars.length === 0 ? (
+                <td className="px-4 py-5 hidden xl:table-cell">
+                  {appEnvs.length === 0 ? (
                     <span className="text-sm text-t4">—</span>
                   ) : (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {visibleEnvs.map((v) => (
-                        <span key={v} className="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">
+                        <span key={v} className="text-xs px-2 py-1 rounded-md font-mono bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">
                           {v}
                         </span>
                       ))}
                       {extraEnvs > 0 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-tsurf2 text-t4 border border-tborder">
+                        <span className="text-xs px-2 py-1 rounded-md bg-tsurf2 text-t4 border border-tborder">
                           +{extraEnvs}
                         </span>
                       )}
                     </div>
                   )}
                 </td>
-                <td className="px-3 py-4">
-                  <span className="text-sm">
-                    {STATUS_ICON[uc.status]} <span className={`text-${statusInfo.color}-500`}>{statusInfo.label}</span>
+                <td className="px-4 py-5">
+                  <span className={`text-sm font-medium text-${statusInfo.color}-500`}>
+                    {STATUS_ICON[uc.status]} {statusInfo.label}
                   </span>
                 </td>
-                <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                <td className="px-4 py-5 text-right" onClick={(e) => e.stopPropagation()}>
                   {uc.comingSoon ? (
-                    <span className="inline-block px-2.5 py-1 text-xs font-medium bg-tsurf2 text-t4 border border-tborder rounded-md whitespace-nowrap">
+                    <span className="inline-block px-3 py-1.5 text-sm font-medium bg-tsurf2 text-t4 border border-tborder rounded-lg whitespace-nowrap">
                       Coming soon
                     </span>
                   ) : uc.appUrl ? (
@@ -234,12 +234,12 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                       href={uc.appUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-block px-2.5 py-1 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors whitespace-nowrap"
+                      className="inline-block px-3.5 py-1.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors whitespace-nowrap shadow-sm"
                     >
-                      Try it now →
+                      Try it →
                     </a>
                   ) : (
-                    <span className="text-t4 text-sm">→</span>
+                    <span className="text-t4 text-base">→</span>
                   )}
                 </td>
               </tr>
@@ -268,42 +268,70 @@ export default function Home() {
   const tableProps = { search, filterStatus, filterType, filterCategory }
 
   return (
-    <div className="p-4">
+    <div className="p-6 md:p-8 max-w-screen-2xl mx-auto">
 
       {/* ── Hero ── */}
-      <div className="mb-8">
-        <h2 className="text-2xl font-semibold text-t1 mb-2">CUGA Apps</h2>
+      <div className="mb-10">
+        <h2 className="text-4xl font-bold text-t1 mb-1 tracking-tight">CUGA Apps</h2>
+        <p className="text-base text-t3 mb-8">AI-powered demo apps built on the CUGA agent framework</p>
+
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 max-w-lg mb-6">
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-            <div className="text-2xl font-bold text-emerald-500">{counts.working}</div>
-            <div className="text-xs text-emerald-500/70 mt-0.5">Working demos</div>
+        <div className="grid grid-cols-3 gap-4 max-w-2xl">
+          <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-5">
+            <div className="text-4xl font-bold text-emerald-500 mb-1">{counts.working}</div>
+            <div className="text-sm font-medium text-emerald-600/80">Working demos</div>
           </div>
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-            <div className="text-2xl font-bold text-amber-500">{counts.partial}</div>
-            <div className="text-xs text-amber-500/70 mt-0.5">Partial / setup required</div>
+          <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-5">
+            <div className="text-4xl font-bold text-amber-500 mb-1">{counts.partial}</div>
+            <div className="text-sm font-medium text-amber-600/80">Partial / setup needed</div>
           </div>
-          <div className="bg-tsurf2 border border-tborder rounded-lg p-3">
-            <div className="text-2xl font-bold text-t4">{counts.gap}</div>
-            <div className="text-xs text-t4 mt-0.5">On roadmap</div>
+          <div className="bg-tsurf2 border border-tborder rounded-2xl p-5">
+            <div className="text-4xl font-bold text-t3 mb-1">{counts.gap}</div>
+            <div className="text-sm font-medium text-t4">On roadmap</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Universal env vars ── */}
+      <div className="mb-8 px-5 py-4 bg-tsurf border border-tborder rounded-2xl">
+        <div className="text-base font-semibold text-t1 mb-3">Required for all apps</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { key: 'AGENT_SETTING_CONFIG', value: 'settings.rits.toml' },
+            { key: 'LLM_MODEL', value: 'gpt-oss-120b' },
+            { key: 'LLM_PROVIDER', value: 'rits' },
+          ].map(({ key, value }) => (
+            <div key={key} className="flex flex-col gap-1 bg-tsurf2 border border-tborder rounded-xl px-3.5 py-2.5">
+              <span className="font-mono text-sm font-semibold text-amber-600">{key}</span>
+              <span className="font-mono text-sm text-t2">{value}</span>
+            </div>
+          ))}
+          <div className="flex flex-col gap-1 bg-tsurf2 border border-tborder rounded-xl px-3.5 py-2.5">
+            <span className="font-mono text-sm font-semibold text-amber-600">RITS_API_KEY</span>
+            <span className="text-sm text-t3">
+              TunnelAll VPN →{' '}
+              <a href="http://rits.fmaas.res.ibm.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">
+                rits.fmaas.res.ibm.com
+              </a>
+            </span>
           </div>
         </div>
       </div>
 
       {/* ── Filters ── */}
-      <div className="flex flex-col gap-3 mb-6">
-        <div className="flex flex-wrap gap-3">
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="flex flex-wrap gap-3 items-center">
           <input
             type="text"
             placeholder="Search use cases..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="px-3 py-1.5 bg-tsurf border border-tborder rounded-lg text-sm text-t1 placeholder-t4 focus:outline-none focus:border-indigo-500 w-64"
+            className="px-4 py-2 bg-tsurf border border-tborder rounded-xl text-base text-t1 placeholder-t4 focus:outline-none focus:border-indigo-500 w-72"
           />
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as Status | 'all')}
-            className="px-3 py-1.5 bg-tsurf border border-tborder rounded-lg text-sm text-t2 focus:outline-none focus:border-indigo-500"
+            className="px-4 py-2 bg-tsurf border border-tborder rounded-xl text-base text-t2 focus:outline-none focus:border-indigo-500"
           >
             <option value="all">All statuses</option>
             <option value="working">Working</option>
@@ -313,7 +341,7 @@ export default function Home() {
           {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all') && (
             <button
               onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all') }}
-              className="px-3 py-1.5 text-sm text-t3 hover:text-t2 transition-colors"
+              className="px-4 py-2 text-sm font-medium text-t3 hover:text-t1 bg-tsurf2 border border-tborder rounded-xl transition-colors"
             >
               Clear all
             </button>
@@ -323,35 +351,12 @@ export default function Home() {
         <CategoryFilterChips value={filterCategory} onChange={setFilterCategory} />
       </div>
 
-      {/* ── Universal env vars note ── */}
-      <div className="mb-4 px-4 py-3 bg-tsurf border border-tborder rounded-xl">
-        <div className="text-sm font-semibold text-t2 mb-2.5">Required for all apps</div>
-        <div className="flex flex-col gap-2">
-          {[
-            { key: 'AGENT_SETTING_CONFIG', value: 'settings.rits.toml' },
-            { key: 'LLM_MODEL', value: 'gpt-oss-120b' },
-            { key: 'LLM_PROVIDER', value: 'rits' },
-          ].map(({ key, value }) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="font-mono text-sm px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">{key}</span>
-              <span className="text-t4 text-sm">=</span>
-              <span className="font-mono text-sm text-t2">{value}</span>
-            </div>
-          ))}
-          <div className="flex items-start gap-2">
-            <span className="font-mono text-sm px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 whitespace-nowrap">RITS_API_KEY</span>
-            <span className="text-t4 text-sm">=</span>
-            <span className="text-sm text-t3 italic">connect to TunnelAll VPN and get a key from <a href="http://rits.fmaas.res.ibm.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline not-italic">rits.fmaas.res.ibm.com</a></span>
-          </div>
-        </div>
-      </div>
-
       {/* ── Use cases table ── */}
       <UseCaseTable useCases={USE_CASES} {...tableProps} />
 
-      <p className="mt-4 text-sm text-t4">
-        Click any row to see architecture, run instructions, and how CUGA powers it.
-        {' '}<span className="text-amber-500 font-bold">*</span> highlighted demos
+      <p className="mt-5 text-sm text-t4">
+        Click any row to see architecture, run instructions, and how CUGA powers it.{' '}
+        <span className="text-amber-500">✦</span> highlighted demos
       </p>
     </div>
   )
