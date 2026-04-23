@@ -1415,6 +1415,77 @@ CugaAgent (previous context retained) → follow-up with comparison table`,
     ],
     appUrl: 'http://localhost:18813',
   },
+  {
+    id: 'api-doc-gen',
+    name: 'API Doc Generator',
+    tagline: 'Upload an OpenAPI spec and get human-readable docs with realistic examples in seconds',
+    type: 'documents',
+    surface: 'gateway',
+    description:
+      'A browser UI that turns OpenAPI/Swagger specs into developer-friendly documentation. Upload a JSON or YAML spec, point to a URL, or pick from five built-in samples (Petstore, GitHub Issues, Stripe Payments, Slack Messaging, OpenWeather). The agent reads the spec endpoint by endpoint, resolves $ref schemas, and writes clear Markdown docs with realistic curl examples and example responses. Supports iterative refinement — ask for more examples, filter to specific endpoints, change tone, or generate a Postman collection structure.',
+    category: 'devtools',
+    status: 'working',
+    channels: [],
+    tools: ['list_endpoints()', 'get_endpoint_details()', 'get_schema()'],
+    demoPath: 'apps/api_doc_gen',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG'],
+      setup: [
+        'cd apps/api_doc_gen',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18811',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls list_endpoints to survey the loaded spec, get_endpoint_details for each endpoint being documented, and get_schema to resolve $ref models — then writes structured Markdown with tables, curl examples, and example responses. POST /load-spec parses JSON/YAML and stores it server-side. POST /upload-spec handles file uploads. Five sample OpenAPI specs are embedded in the UI for one-click loading. No database — spec is in-memory, conversation is thread-aware.',
+    diagram: `python main.py  →  http://127.0.0.1:18811
+
+User loads Stripe Payments spec (sample), then:
+User: "Document all endpoints"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ list_endpoints()
+      │     → 9 endpoints across Customers, Charges, Refunds, Subscriptions
+      ├─ get_endpoint_details("/charges", "POST")
+      │     → amount, currency, customer, source, description fields
+      ├─ get_schema("Charge")
+      │     → id, amount, currency, status, paid, receipt_url
+      ▼
+Generated docs:
+### POST /charges — Create a charge
+
+**Authentication:** Basic auth — Stripe secret key as username
+
+**Request body:**
+| Field    | Type    | Required | Description              |
+|----------|---------|----------|--------------------------|
+| amount   | integer | Yes      | Amount in cents (e.g. 4999) |
+| currency | string  | Yes      | ISO 4217 code (e.g. "usd") |
+
+\`\`\`bash
+curl -X POST https://api.stripe.com/v1/charges \\
+  -u sk_live_…: \\
+  -d amount=4999 \\
+  -d currency=usd \\
+  -d customer=cus_Qk5fG2hJ8mPx3N
+\`\`\``,
+    cugaContribution: [
+      'Agent decides how many tool calls to make — one endpoint at a time for large specs, or in bulk for small ones',
+      'get_schema resolves $ref chains the LLM would otherwise hallucinate around',
+      'Realistic example values are inferred by the LLM from field names — amount → 4999, email → alice@acme.com',
+      'Multi-turn thread: "add more examples" or "document only POST endpoints" refines the previous output in context',
+    ],
+    examples: [
+      'Document all endpoints',
+      'Show me the authentication details and how to get started',
+      'Generate a quick-start guide for a new developer',
+      'Document only the POST endpoints with example request bodies',
+      'List all endpoints with a one-line description of each',
+      'Generate a Postman collection structure for these endpoints',
+    ],
+    appUrl: 'http://localhost:18811',
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {
