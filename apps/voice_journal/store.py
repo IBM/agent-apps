@@ -8,7 +8,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-_DIR     = Path(__file__).parent
+_DIR     = Path(__file__).parent / "storage"
+_DIR.mkdir(exist_ok=True)
 _JOURNAL = _DIR / "journal"
 _DB_PATH = _DIR / "journal.db"
 

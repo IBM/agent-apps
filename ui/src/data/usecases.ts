@@ -57,6 +57,8 @@ export interface UseCase {
   appUrl: string | null
   /** If true, show "Coming soon" badge instead of a launch button */
   comingSoon?: boolean
+  /** If true, hide from the umbrella UI entirely */
+  hidden?: boolean
   /** Copy-pasteable examples — chat messages for web UI apps, commands for CLI apps */
   examples?: string[]
 }
@@ -304,6 +306,7 @@ CugaAgent (guided by skills/video_qa.md)
       'Summarise the key action items',
     ],
     appUrl: 'http://localhost:8766',
+    hidden: true,
   },
 
   {

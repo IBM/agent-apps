@@ -72,14 +72,14 @@ async def _cli(
         if not path.exists():
             print(f"Error: file not found: {path}", file=sys.stderr)
             sys.exit(1)
-        print(f"\nVideo: {path.name}")
+        print(f"\nAudio: {path.name}")
     else:
-        print("\nNo video specified. You can still load one during the session.")
+        print("\nNo audio file specified. You can still load one during the session.")
 
     if video_path:
         # Pre-warm the Whisper cache before the agent runs — Whisper takes
         # minutes, which exceeds the agent's 30s code-executor timeout.
-        # The agent's transcribe_video tool then just loads from disk cache
+        # The agent's transcribe_audio tool then just loads from disk cache
         # and indexes into ChromaDB, completing in seconds.
         import transcriber as tr
         print("Transcribing… (cached on disk after first run)")
@@ -133,7 +133,7 @@ try:
     from pydantic import BaseModel as _BaseModel
 
     class LoadReq(_BaseModel):
-        video_path: str
+        audio_path: str
         whisper_model: str = "base"
 
     class AskReq(_BaseModel):
@@ -162,11 +162,11 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
     # Job state for async transcription polling
     _job: dict = {"status": "idle", "error": None, "result": None}
 
-    def _load_sync(video_path: str, whisper_model: str):
+    def _load_sync(audio_path: str, whisper_model: str):
         import transcriber as tr
-        segments = tr.transcribe(video_path, model_size=whisper_model)
-        idx.index_segments(video_path, segments)
-        _agent._video_path_ref["path"]     = video_path
+        segments = tr.transcribe(audio_path, model_size=whisper_model)
+        idx.index_segments(audio_path, segments)
+        _agent._video_path_ref["path"]     = audio_path
         _agent._video_path_ref["segments"] = segments
         return segments
 
@@ -178,13 +178,13 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
 
         def _run():
             try:
-                segments = _load_sync(req.video_path, req.whisper_model)
+                segments = _load_sync(req.audio_path, req.whisper_model)
                 import transcriber as tr
                 duration = segments[-1]["end"] if segments else 0
                 _job.update(status="done", result={
                     "segments_count": len(segments),
                     "duration_fmt": tr.fmt_time(duration),
-                    "video_path": req.video_path,
+                    "audio_path": req.audio_path,
                 })
             except Exception as exc:
                 _job.update(status="error", error=str(exc))
@@ -211,7 +211,7 @@ def _web(port: int, provider: str | None = None, llm_model: str | None = None):
         duration = segs[-1]["end"] if segs else 0
         return {
             "loaded":          bool(_agent.video_path),
-            "video_path":      _agent.video_path,
+            "audio_path":      _agent.video_path,
             "segments_count":  len(segs),
             "duration_fmt":    tr.fmt_time(duration) if segs else None,
         }
@@ -289,17 +289,17 @@ button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
 </style>
 </head>
 <body>
-<h1>Video Q&A</h1>
+<h1>Audio Q&A</h1>
 <p class="sub">Powered by <span>CugaAgent</span> · Whisper + ChromaDB + LLM</p>
 
 <div class="card">
-  <label>Video file</label>
+  <label>Audio file</label>
   <p style="font-size:12px;color:#6b6b7e;margin-bottom:8px">
-    Copy your file to <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">apps/video_qa/videos/</code>
-    on the host, then enter <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">/videos/filename.mp4</code> below.
+    Copy your file to <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">apps/video_qa/videos/</code> on the host, then enter <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">/audio/filename.mp3</code> below.
+    Supported: <code style="background:#111827;padding:1px 5px;border-radius:4px;color:#818cf8">.wav &nbsp;.mp3 &nbsp;.m4a &nbsp;.flac &nbsp;.ogg &nbsp;.aac</code>
   </p>
   <div class="row">
-    <input id="videoPath" type="text" placeholder="/videos/meeting.mp4" />
+    <input id="audioPath" type="text" placeholder="/audio/recording.mp3" />
   </div>
   <div class="row" style="margin-top:8px;align-items:center">
     <label style="margin:0;white-space:nowrap">Whisper model</label>
@@ -310,10 +310,10 @@ button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
       <option value="medium">medium</option>
       <option value="large-v3">large-v3 (most accurate)</option>
     </select>
-    <button id="loadBtn" onclick="loadVideo()">Transcribe</button>
+    <button id="loadBtn" onclick="loadAudio()">Transcribe</button>
   </div>
   <div style="margin-top:12px">
-    <span class="status-pill status-none" id="statusPill">No video loaded</span>
+    <span class="status-pill status-none" id="statusPill">No audio loaded</span>
   </div>
 </div>
 
@@ -332,7 +332,7 @@ button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
   <label>Ask a question</label>
   <div class="row">
     <input id="question" type="text"
-      placeholder="Where was M3 discussed?  ·  Summarise key decisions  ·  What was said at 10 minutes?"
+      placeholder="What was discussed at 10 minutes?  ·  Summarise key decisions  ·  Where was X mentioned?"
       onkeydown="if(event.key==='Enter')ask()"
     />
     <button id="askBtn" onclick="ask()" disabled>Ask</button>
@@ -344,8 +344,8 @@ button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
 let loaded = false
 let allSegments = []
 
-async function loadVideo() {
-  const path  = document.getElementById('videoPath').value.trim()
+async function loadAudio() {
+  const path  = document.getElementById('audioPath').value.trim()
   const model = document.getElementById('modelSize').value
   if (!path) return
   const btn  = document.getElementById('loadBtn')
@@ -354,7 +354,7 @@ async function loadVideo() {
   pill.className = 'status-pill status-loading'
   pill.textContent = '⏳ Transcribing…'
   try {
-    const res = await fetch('/load', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:path,whisper_model:model})})
+    const res = await fetch('/load', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio_path:path,whisper_model:model})})
     if (!res.ok) throw new Error(await res.text())
     // Poll for completion — /load returns immediately, transcription runs in background
     while (true) {
@@ -383,8 +383,8 @@ async function loadVideo() {
   } finally { btn.disabled = false; btn.textContent = 'Transcribe' }
 }
 let loadStart = 0
-const _origLoad = loadVideo
-loadVideo = async function() { loadStart = Date.now(); return _origLoad() }
+const _origLoad = loadAudio
+loadAudio = async function() { loadStart = Date.now(); return _origLoad() }
 
 async function loadSegments() {
   const res = await fetch('/segments')
@@ -473,7 +473,7 @@ fetch('/status').then(r=>r.json()).then(s=>{
     const pill=document.getElementById('statusPill')
     pill.className='status-pill status-ok'
     pill.textContent=`✓ ${s.segments_count} segments · ${s.duration_fmt}`
-    document.getElementById('videoPath').value=s.video_path||''
+    document.getElementById('audioPath').value=s.audio_path||''
     document.getElementById('askBtn').disabled=false
     loaded=true
     loadSegments()

@@ -82,9 +82,9 @@ async def config_status():
             cuga_available = True
         except ImportError:
             cuga_available = False
-        return {"configured": True, "provider": provider, "cuga_available": cuga_available, "sample_data_path": str(HERE / "sample_data")}
+        return {"configured": True, "provider": provider, "cuga_available": cuga_available, "sample_data_path": str(HERE / "data")}
     except Exception as exc:
-        return {"configured": False, "provider": None, "cuga_available": False, "error": str(exc), "sample_data_path": str(HERE / "sample_data")}
+        return {"configured": False, "provider": None, "cuga_available": False, "error": str(exc), "sample_data_path": str(HERE / "data")}
 
 
 @app.post("/api/generate")

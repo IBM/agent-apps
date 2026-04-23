@@ -41,6 +41,7 @@ import os
 import shutil
 import smtplib
 import sqlite3
+import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -188,70 +189,37 @@ def _get_summary_content(filename: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Tools
+# Extraction
 # ---------------------------------------------------------------------------
 
-# Watcher pre-extracts heavy files here before calling the agent.
-# extract_document tool reads from cache so docling never runs inside the agent
-# (avoiding code-executor timeouts on slow CPU docling runs).
-_extraction_cache: dict[str, str] = {}
-
-
-def _extract_to_cache(path: Path) -> str:
-    """Run extraction and store in cache. Called by the watcher before agent.invoke()."""
+def _extract(path: Path) -> str:
+    """Extract text from a file. Non-text files run docling in a subprocess to isolate memory."""
     ext = path.suffix.lower()
     if ext in TEXT_EXTENSIONS:
-        content = path.read_text(encoding="utf-8", errors="replace")
-    else:
-        try:
-            from docling.document_converter import DocumentConverter
-            result   = DocumentConverter().convert(str(path))
-            markdown = result.document.export_to_markdown()
-            content  = markdown if markdown.strip() else "(no text extracted — file may be purely graphical)"
-        except ImportError:
-            content = "(docling not installed — run: pip install docling)"
-        except Exception as exc:
-            content = f"(extraction error: {exc})"
-    _extraction_cache[path.name] = content
-    return content
+        return path.read_text(encoding="utf-8", errors="replace")
 
-
-def _make_tools():
-    from langchain_core.tools import tool
-
-    @tool
-    def extract_document(file_path: str) -> str:
-        """
-        Extract the full text content from a file. Supports .txt, .md, .pdf,
-        .png, .jpg, .jpeg, .tiff, .bmp, and .gif. Use this before summarizing
-        a newly dropped file.
-
-        Args:
-            file_path: Absolute or relative path to the file.
-        """
-        path = Path(file_path)
-        # Return from cache if pre-extracted (avoids re-running docling)
-        if path.name in _extraction_cache:
-            return _extraction_cache[path.name]
-        if not path.exists():
-            return f"(file not found: {file_path})"
-        return _extract_to_cache(path)
-
-    @tool
-    def get_document_content(filename: str) -> str:
-        """
-        Retrieve the full previously-extracted text for a file that has already
-        been processed. Use this when answering questions about a specific file.
-
-        Args:
-            filename: The filename as it appears in the summary feed (e.g. "report.pdf").
-        """
-        content = _get_summary_content(filename)
-        if content is None:
-            return f"(no stored content found for '{filename}')"
-        return content[:20000] if content else "(stored content is empty)"
-
-    return [extract_document, get_document_content]
+    # Run docling in a subprocess — if it OOMs, only the subprocess is killed,
+    # not the main server process.
+    script = (
+        "import sys; from pathlib import Path; "
+        "from docling.document_converter import DocumentConverter; "
+        f"r = DocumentConverter().convert({str(path)!r}); "
+        "md = r.document.export_to_markdown(); "
+        "print(md if md.strip() else '(no text extracted — file may be purely graphical)')"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or "unknown error").strip().splitlines()[-1]
+            return f"(extraction error: {err})"
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return "(extraction timed out after 180s)"
+    except Exception as exc:
+        return f"(extraction error: {exc})"
 
 
 # ---------------------------------------------------------------------------
@@ -259,18 +227,10 @@ def _make_tools():
 # ---------------------------------------------------------------------------
 
 _SYSTEM = """\
-# Document Summarizer
+You are a document analyst. The user will provide extracted file content directly.
+Do not ask for tools or file paths — the content is already in the message.
 
-You are a document summarizer with tools to read file contents.
-
-## When summarizing a new file
-1. Call extract_document with the file path to get the content.
-2. Produce a concise summary in the format below.
-
-## When answering questions about a specific file
-Call get_document_content with the filename to retrieve its stored text, then answer.
-
-## Summary format
+When summarizing, use this format:
 
 <one sentence TL;DR>
 
@@ -282,7 +242,7 @@ Key points:
 Action items (if any):
 - <action item with owner if mentioned>
 
-## Rules
+Rules:
 - Lead with a one-sentence TL;DR.
 - 3–5 bullet points covering key points, decisions, or facts.
 - Call out action items if present (meeting notes, task lists).
@@ -301,7 +261,7 @@ def make_agent():
             provider=os.getenv("LLM_PROVIDER"),
             model=os.getenv("LLM_MODEL"),
         ),
-        tools=_make_tools(),
+        tools=[],
         special_instructions=_SYSTEM,
         cuga_folder=str(_DIR / ".cuga"),
     )
@@ -371,20 +331,17 @@ async def _watcher_loop(agent) -> None:
                 _pending_files.add(file_path.name)
                 log.info("Processing: %s", file_path.name)
                 try:
-                    # 1. Pre-extract content (heavy docling runs happen here, not inside agent).
-                    #    Stored in _extraction_cache so extract_document tool returns instantly.
+                    # 1. Extract content in a thread (docling can be slow).
                     stored_content = await asyncio.get_event_loop().run_in_executor(
-                        None, _extract_to_cache, dest
+                        None, _extract, dest
                     )
 
-                    # 2. Agent calls extract_document tool → hits cache, no timeout risk.
+                    # 2. Pass content directly to the agent — no tool calling needed.
                     result = await agent.invoke(
-                        f"A new file was dropped: {dest}\n\nFilename: {file_path.name}\n\n"
-                        f"Use the extract_document tool to read it, then produce a summary.",
+                        f"File: {file_path.name}\n\nContent:\n{stored_content[:15000]}\n\nSummarize this document.",
                         thread_id=f"sum-{file_path.stem}",
                     )
                     summary = result.answer
-                    _extraction_cache.pop(file_path.name, None)  # clean up
 
                     # 3. Keyword alert check
                     alerted = False
@@ -494,25 +451,26 @@ def _web(port: int) -> None:
                 )
         try:
             if req.filename:
-                # Scoped to a specific file — agent uses get_document_content tool
-                all_s  = _list_summaries(200)
-                match  = next((s for s in all_s if s["filename"] == req.filename), None)
-                thread = f"file-{match['id']}" if match else "chat"
+                # Scoped to a specific file — inject stored content directly
+                all_s   = _list_summaries(200)
+                match   = next((s for s in all_s if s["filename"] == req.filename), None)
+                thread  = f"file-{match['id']}" if match else "chat"
+                content = _get_summary_content(req.filename) or ""
+                if content.startswith("(extraction error:"):
+                    return {"answer": f"This file could not be extracted when it was uploaded. Please re-upload it."}
                 prompt = (
-                    f"The user is asking about this file: {req.filename}\n\n"
-                    f"Use the get_document_content tool to retrieve its full text, then answer.\n\n"
+                    f"File: {req.filename}\n\nContent:\n{content[:15000]}\n\n"
                     f"Question: {req.question}"
                 )
             else:
-                # General — inject recent summaries as context (they're small)
+                # General — inject recent summaries as context
                 recent  = _list_summaries(10)
                 context = "\n\n".join(
                     f"File: {s['filename']}\nSummary: {s['summary']}"
                     for s in recent
                 )
                 prompt = (
-                    f"Recent file summaries:\n{context}\n\n"
-                    f"User question: {req.question}"
+                    f"Recent file summaries:\n{context}\n\nQuestion: {req.question}"
                 ) if recent else req.question
                 thread = "chat"
             result = await agent.invoke(prompt, thread_id=thread)
@@ -705,55 +663,12 @@ _HTML = """<!DOCTYPE html>
           <div class="dz-icon">⬆️</div>
           <p>Drop a file here or click to upload</p>
           <small>.txt · .md · .pdf · .png · .jpg · .tiff · .bmp</small>
+          <small style="color:#f87171;margin-top:6px;display:block">⚠️ Do not upload confidential or sensitive data</small>
         </div>
         <div id="upload-status" style="font-size:12px;margin-top:8px;display:none"></div>
       </div>
     </div>
 
-    <!-- Watcher settings -->
-    <div class="card">
-      <div class="card-header"><h2>⚙️ Watcher Settings</h2></div>
-      <div class="card-body">
-        <div class="srow">
-          <label>Poll every</label>
-          <input type="number" id="poll-seconds" value="15" min="5" max="3600">
-          <span style="font-size:11px;color:#6b7280">sec</span>
-        </div>
-        <div class="srow">
-          <label>Watch folder</label>
-          <input type="text" id="watch-dir" placeholder="./inbox">
-        </div>
-        <button class="btn btn-sm" onclick="savePoll()">Save</button>
-        <span class="save-ok" id="poll-ok">✓ Saved</span>
-
-        <div class="section-label" style="margin-top:14px">Email alert on keywords</div>
-        <div class="tag-row" id="kw-tags"></div>
-        <div class="kw-input-row">
-          <input type="text" id="kw-input" placeholder="urgent, invoice, action…"
-                 onkeydown="if(event.key==='Enter')addKeyword()">
-          <button class="btn btn-sm btn-ghost" onclick="addKeyword()">+ Add</button>
-        </div>
-        <button class="btn btn-sm" style="margin-top:8px" onclick="saveKeywords()">Save keywords</button>
-        <span class="save-ok" id="kw-ok">✓ Saved</span>
-      </div>
-    </div>
-
-    <!-- Email credentials -->
-    <div class="card">
-      <div class="card-header"><h2>✉️ Email Alerts</h2></div>
-      <div class="card-body">
-        <div class="srow"><label>SMTP host</label>
-          <input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
-        <div class="srow"><label>Username</label>
-          <input type="email" id="smtp-user" placeholder="you@gmail.com"></div>
-        <div class="srow"><label>Password</label>
-          <input type="password" id="smtp-pass" placeholder="app password"></div>
-        <div class="srow"><label>Alert to</label>
-          <input type="email" id="smtp-to" placeholder="recipient@example.com"></div>
-        <button class="btn btn-sm" onclick="saveEmail()">Save</button>
-        <span class="save-ok" id="email-ok">✓ Saved</span>
-      </div>
-    </div>
 
   </div><!-- /left -->
 
@@ -809,7 +724,6 @@ _HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-let _keywords = [];
 let _activeFile = null;  // { filename, id }
 
 function setActiveFile(filename, id) {
@@ -837,7 +751,6 @@ function clearActiveFile() {
 
 // ── Init ───────────────────────────────────────────────────────────
 async function init() {
-  await loadSettings();
   await loadSummaries();
   setInterval(loadSummaries, 10000);
   setInterval(loadWatcherStatus, 8000);
@@ -852,72 +765,6 @@ async function loadWatcherStatus() {
     document.getElementById('hdr-stat').textContent =
       `${s.processed} files processed · last check ${s.last_check ? new Date(s.last_check).toLocaleTimeString() : '—'}`;
   } catch(e) {}
-}
-
-async function loadSettings() {
-  try {
-    const s = await fetch('/settings').then(r => r.json());
-    document.getElementById('poll-seconds').value = s.poll_seconds || 15;
-    document.getElementById('watch-dir').value    = s.watch_dir    || '';
-    document.getElementById('smtp-host').value    = s.email?.host  || '';
-    document.getElementById('smtp-user').value    = s.email?.user  || '';
-    document.getElementById('smtp-pass').value    = s.email?.password ? '••••••••' : '';
-    document.getElementById('smtp-to').value      = s.email?.to   || '';
-    _keywords = s.alert_keywords || [];
-    renderKeywords();
-  } catch(e) {}
-}
-
-// ── Keywords ────────────────────────────────────────────────────────
-function renderKeywords() {
-  const row = document.getElementById('kw-tags');
-  row.innerHTML = _keywords.map((kw, i) =>
-    `<span class="tag">${kw}<span class="tag-del" onclick="removeKw(${i})">×</span></span>`
-  ).join('');
-}
-function addKeyword() {
-  const inp = document.getElementById('kw-input');
-  const val = inp.value.trim();
-  if (val && !_keywords.includes(val)) { _keywords.push(val); renderKeywords(); }
-  inp.value = '';
-}
-function removeKw(i) { _keywords.splice(i, 1); renderKeywords(); }
-
-async function saveKeywords() {
-  await fetch('/settings/keywords', { method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ keywords: _keywords }) });
-  flash('kw-ok');
-}
-
-// ── Settings saves ──────────────────────────────────────────────────
-async function savePoll() {
-  await fetch('/settings/poll', { method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      poll_seconds: +document.getElementById('poll-seconds').value,
-      watch_dir:     document.getElementById('watch-dir').value,
-    }) });
-  flash('poll-ok');
-}
-
-async function saveEmail() {
-  const pass = document.getElementById('smtp-pass').value;
-  await fetch('/settings/email', { method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      host:     document.getElementById('smtp-host').value,
-      user:     document.getElementById('smtp-user').value,
-      password: pass === '••••••••' ? undefined : pass,
-      to:       document.getElementById('smtp-to').value,
-    }) });
-  flash('email-ok');
-}
-
-function flash(id) {
-  const el = document.getElementById(id);
-  el.style.display = 'inline';
-  setTimeout(() => el.style.display = 'none', 2000);
 }
 
 // ── Upload ──────────────────────────────────────────────────────────

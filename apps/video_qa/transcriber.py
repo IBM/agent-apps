@@ -1,11 +1,13 @@
 """
-Transcriber — extract audio from video and transcribe with Whisper.
+Transcriber — transcribe audio files with Whisper.
 
 Returns timestamped segments: [{text, start, end, start_fmt, end_fmt}, ...]
 
+Supported formats: .wav  .mp3  .m4a  .flac  .ogg  .aac
+No ffmpeg required — audio files are fed directly to Whisper.
+
 Dependencies (install once):
     pip install faster-whisper
-    brew install ffmpeg   # or: conda install -c conda-forge ffmpeg
 
 faster-whisper is ~4x faster than openai-whisper and returns word-level timestamps.
 Falls back to openai-whisper if faster-whisper is not installed.
@@ -15,75 +17,71 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
 
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
+
 _CACHE_DIR = Path(__file__).parent / ".cache" / "transcripts"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def transcribe(video_path: str | Path, model_size: str = "base") -> list[dict[str, Any]]:
+def transcribe(audio_path: str | Path, model_size: str = "base") -> list[dict[str, Any]]:
     """
-    Transcribe a video or audio file and return timestamped segments.
+    Transcribe an audio file and return timestamped segments.
 
     Each segment: {text, start, end, start_fmt, end_fmt}
-
     Results are cached on disk by file hash.
 
     Args:
-        video_path: Path to .mp4, .mov, .mkv, .m4a, .wav, .mp3, etc.
+        audio_path: Path to .wav, .mp3, .m4a, .flac, .ogg, or .aac file.
         model_size: Whisper model size — "tiny", "base", "small", "medium", "large-v3".
     """
-    video_path = Path(video_path)
+    audio_path = Path(audio_path)
 
-    # When running in Docker, videos must be placed in apps/video_qa/videos/
-    # on the host, which is mounted read-only at /videos inside the container.
-    _videos_dir = Path("/videos")
-    if _videos_dir.exists():
-        try:
-            video_path.resolve().relative_to(_videos_dir.resolve())
-        except ValueError:
-            raise ValueError(
-                f"File must be inside /videos. "
-                f"Copy your file to apps/video_qa/videos/ on the host and use "
-                f"/videos/<filename> as the path. Got: {video_path}"
-            )
-
-    if not video_path.exists():
-        raise FileNotFoundError(
-            f"Video file not found: {video_path}. "
-            f"Make sure the file is in apps/video_qa/videos/ and use /videos/<filename>."
+    if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported format '{audio_path.suffix}'. "
+            f"Only audio files are supported: {', '.join(sorted(AUDIO_EXTENSIONS))}. "
+            f"For video files, extract the audio first with: "
+            f"ffmpeg -i input.mp4 -vn -acodec pcm_s16le output.wav"
         )
 
-    cache_key  = _file_hash(video_path)
+    # In Docker, audio files must be placed in apps/video_qa/videos/ on the host,
+    # which is mounted read-only at /audio inside the container.
+    _audio_dir = Path("/audio")
+    if _audio_dir.exists():
+        try:
+            audio_path.resolve().relative_to(_audio_dir.resolve())
+        except ValueError:
+            raise ValueError(
+                f"Running in Docker — files must be inside /audio. "
+                f"Copy your file to apps/video_qa/videos/ on the host and use "
+                f"/audio/<filename> as the path. Got: {audio_path}"
+            )
+
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    cache_key  = _file_hash(audio_path)
     cache_file = _CACHE_DIR / f"{cache_key}_{model_size}.json"
 
     if cache_file.exists():
         log.info("Transcript cache hit: %s", cache_file.name)
         return json.loads(cache_file.read_text())
 
-    log.info("Transcribing %s with model=%s", video_path.name, model_size)
-
-    audio_path = _extract_audio(video_path)
-
-    try:
-        segments = _run_whisper(audio_path, model_size)
-    finally:
-        if audio_path != video_path:
-            audio_path.unlink(missing_ok=True)
-
+    log.info("Transcribing %s with model=%s", audio_path.name, model_size)
+    segments = _run_whisper(audio_path, model_size)
     cache_file.write_text(json.dumps(segments, ensure_ascii=False, indent=2))
     log.info("Transcription complete — %d segments, cached at %s", len(segments), cache_file.name)
     return segments
 
 
-def invalidate_cache(video_path: str | Path, model_size: str = "base") -> None:
-    video_path = Path(video_path)
-    cache_key  = _file_hash(video_path)
+def invalidate_cache(audio_path: str | Path, model_size: str = "base") -> None:
+    audio_path = Path(audio_path)
+    cache_key  = _file_hash(audio_path)
     cache_file = _CACHE_DIR / f"{cache_key}_{model_size}.json"
     if cache_file.exists():
         cache_file.unlink()
@@ -108,35 +106,6 @@ def _file_hash(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
-def _extract_audio(video_path: Path) -> Path:
-    suffix = video_path.suffix.lower()
-    if suffix in {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}:
-        return video_path
-
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        raise RuntimeError(
-            "ffmpeg is required to extract audio from video files.\n"
-            "Install with: brew install ffmpeg"
-        )
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    tmp.close()
-    out_path = Path(tmp.name)
-
-    cmd = [
-        "ffmpeg", "-y", "-i", str(video_path),
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-        str(out_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed:\n{result.stderr.decode(errors='replace')}")
-    log.info("Audio extracted: %s → %s", video_path.name, out_path)
-    return out_path
-
-
 def _run_whisper(audio_path: Path, model_size: str) -> list[dict[str, Any]]:
     try:
         return _faster_whisper(audio_path, model_size)
@@ -149,7 +118,6 @@ def _faster_whisper(audio_path: Path, model_size: str) -> list[dict[str, Any]]:
     from faster_whisper import WhisperModel
 
     # cpu_threads=2 leaves CPUs free for uvicorn to stay responsive during transcription.
-    # Without this, ctranslate2 claims all cores and the HTTP server becomes unreachable.
     model = WhisperModel(model_size, compute_type="int8", cpu_threads=2, num_workers=1)
     log.info("Running faster-whisper (%s)…", model_size)
 

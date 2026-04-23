@@ -17,6 +17,5 @@ sentence-transformers
 fastapi
 uvicorn
 
-# system dependency (not pip-installable):
-#   brew install ffmpeg   ← required for video files (.mp4 .mov .mkv ...)
-#   audio-only files (.wav .mp3 .m4a) skip ffmpeg entirely
+# supported audio formats: .wav  .mp3  .m4a  .flac  .ogg  .aac
+# no ffmpeg required — audio is fed directly to Whisper

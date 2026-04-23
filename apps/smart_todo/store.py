@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).parent / "todos.db"
+DB_PATH = Path(__file__).parent / "storage" / "todos.db"
+DB_PATH.parent.mkdir(exist_ok=True)
 
 _CREATE = """
 CREATE TABLE IF NOT EXISTS todos (

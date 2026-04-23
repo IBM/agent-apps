@@ -96,29 +96,29 @@ def _make_tools(video_path_ref: dict):
     import index as idx
 
     @tool
-    def transcribe_video(video_path: str, model_size: str = "base") -> dict:
+    def transcribe_audio(audio_path: str, model_size: str = "base") -> dict:
         """
-        Load a pre-transcribed video into the Q&A index.
+        Load a pre-transcribed audio file into the Q&A index.
 
         The Whisper transcription is cached on disk. This tool loads that
         cache and indexes the segments for search — it completes in seconds.
 
         Args:
-            video_path: Absolute path to the video/audio file.
+            audio_path: Absolute path to the audio file (.wav .mp3 .m4a .flac .ogg .aac).
             model_size: Whisper model size used during transcription.
 
         Returns:
-            Dict with segments_count, duration_fmt, video_path.
+            Dict with segments_count, duration_fmt, audio_path.
         """
-        segments = tr.transcribe(video_path, model_size=model_size)
-        idx.index_segments(video_path, segments)
-        video_path_ref["path"]     = video_path
+        segments = tr.transcribe(audio_path, model_size=model_size)
+        idx.index_segments(audio_path, segments)
+        video_path_ref["path"]     = audio_path
         video_path_ref["segments"] = segments
         duration = segments[-1]["end"] if segments else 0
         return {
             "segments_count": len(segments),
             "duration_fmt":   tr.fmt_time(duration),
-            "video_path":     video_path,
+            "audio_path":     audio_path,
         }
 
     @tool
@@ -156,7 +156,7 @@ def _make_tools(video_path_ref: dict):
         seg = idx.get_at_time(video_path_ref.get("path", ""), seconds, segments)
         return seg if seg else {"error": "No segment found."}
 
-    return [transcribe_video, search_transcript, get_segment_at_time]
+    return [transcribe_audio, search_transcript, get_segment_at_time]
 
 
 # ---------------------------------------------------------------------------

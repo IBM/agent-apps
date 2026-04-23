@@ -259,10 +259,12 @@ export default function Home() {
   const [filterType, setFilterType] = useState<UseCaseType | 'all'>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
 
+  const visible = USE_CASES.filter((u) => !u.hidden)
+
   const counts = useMemo(() => ({
-    working: USE_CASES.filter((u) => u.status === 'working').length,
-    partial: USE_CASES.filter((u) => u.status === 'partial').length,
-    gap:     USE_CASES.filter((u) => u.status === 'gap').length,
+    working: visible.filter((u) => u.status === 'working').length,
+    partial: visible.filter((u) => u.status === 'partial').length,
+    gap:     visible.filter((u) => u.status === 'gap').length,
   }), [])
 
   const tableProps = { search, filterStatus, filterType, filterCategory }
@@ -352,7 +354,7 @@ export default function Home() {
       </div>
 
       {/* ── Use cases table ── */}
-      <UseCaseTable useCases={USE_CASES} {...tableProps} />
+      <UseCaseTable useCases={visible} {...tableProps} />
 
       <p className="mt-5 text-sm text-t4">
         Click any row to see architecture, run instructions, and how CUGA powers it.{' '}
