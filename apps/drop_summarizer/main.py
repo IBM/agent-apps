@@ -193,19 +193,18 @@ def _get_summary_content(filename: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _extract(path: Path) -> str:
-    """Extract text from a file. Non-text files run docling in a subprocess to isolate memory."""
+    """Extract text using docling. Runs in a subprocess to isolate memory."""
     ext = path.suffix.lower()
     if ext in TEXT_EXTENSIONS:
         return path.read_text(encoding="utf-8", errors="replace")
 
-    # Run docling in a subprocess — if it OOMs, only the subprocess is killed,
-    # not the main server process.
+    # Docling runs in a subprocess so an OOM kill doesn't take down the server.
+    # Models are pre-downloaded at image build time so there's no cold-download delay.
     script = (
-        "import sys; from pathlib import Path; "
         "from docling.document_converter import DocumentConverter; "
         f"r = DocumentConverter().convert({str(path)!r}); "
         "md = r.document.export_to_markdown(); "
-        "print(md if md.strip() else '(no text extracted — file may be purely graphical)')"
+        "print(md if md.strip() else '(no text extracted — file may be image-only)')"
     )
     try:
         result = subprocess.run(
@@ -217,7 +216,7 @@ def _extract(path: Path) -> str:
             return f"(extraction error: {err})"
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
-        return "(extraction timed out after 180s)"
+        return "(extraction timed out — document may be too large or complex)"
     except Exception as exc:
         return f"(extraction error: {exc})"
 
