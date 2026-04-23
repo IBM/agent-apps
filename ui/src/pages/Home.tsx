@@ -11,6 +11,11 @@ import {
 
 const STARRED_IDS = new Set(['deck-forge', 'drop-summarizer', 'smart-todo', 'video-qa'])
 
+const resolveUrl = (url: string | null): string | null => {
+  if (!url) return null
+  return url.replace('localhost', window.location.hostname)
+}
+
 const TYPE_CONFIG: Record<UseCaseType, { label: string; icon: string; activeCls: string }> = {
   'event-driven': { label: 'Event-driven', icon: '⚡', activeCls: 'bg-amber-500 text-white border-amber-500' },
   'documents':    { label: 'Documents',    icon: '📄', activeCls: 'bg-cyan-500 text-white border-cyan-500' },
@@ -231,7 +236,7 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                     </span>
                   ) : uc.appUrl ? (
                     <a
-                      href={uc.appUrl}
+                      href={resolveUrl(uc.appUrl)!}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-block px-3.5 py-1.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors whitespace-nowrap shadow-sm"
