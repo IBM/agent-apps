@@ -62,5 +62,11 @@ boxsdk[jwt]
 
 # ── wiki_dive — no new deps (uses httpx, already listed above) ───────────────
 
+# ── ibm_whats_new — no new deps (uses tavily-python, beautifulsoup4, httpx) ──
+
+# ── api_doc_gen ───────────────────────────────────────────────
+pyyaml
+python-multipart
+
 # ── observability ─────────────────────────────────────────────
 openlit

@@ -1228,6 +1228,69 @@ Answer with citation:
     appUrl: 'http://localhost:18810',
   },
   {
+    id: 'ibm-whats-new',
+    name: "IBM What's New Monitor",
+    tagline: 'Track IBM Cloud release notes across services — scheduled digest, email alerts, ad-hoc chat',
+    description:
+      "A browser UI that monitors IBM Cloud service release notes and What's New announcements. Add services to your watch list (Code Engine, watsonx.ai, Event Streams, etc.), set a daily or weekly schedule, and the agent searches ibm.com and cloud.ibm.com via Tavily for recent changes. Meaningful updates appear in the Digest Log and are emailed automatically. Chat panel for ad-hoc questions like 'what changed in Cloud Object Storage this month?'",
+    category: 'infrastructure',
+    type: 'event-driven',
+    surface: 'pipeline',
+    status: 'working',
+    channels: ['EmailChannel'],
+    tools: ['search_ibm_updates()', 'fetch_release_notes()'],
+    demoPath: 'apps/ibm_whats_new',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TAVILY_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'DIGEST_TO'],
+      setup: [
+        'cd apps/ibm_whats_new',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 18814',
+    },
+    architecture:
+      "FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent calls search_ibm_updates (Tavily scoped to ibm.com/cloud.ibm.com) + fetch_release_notes (httpx + BeautifulSoup, IBM URLs only) → answer with sources. Background scheduler: asyncio task checks every 5 minutes whether a digest is due; when due, agent checks each tracked service in turn, collects UPDATE: responses, and sends an SMTP digest. State persisted in .store.json.",
+    diagram: `python main.py  →  http://127.0.0.1:18814
+
+Chat panel (on-demand):
+User: "What changed in Code Engine this month?"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ search_ibm_updates("IBM Code Engine release notes 2026")
+      │     → Tavily → cloud.ibm.com/docs/code-engine release notes
+      ├─ fetch_release_notes("https://cloud.ibm.com/docs/code-engine?topic=...")
+      │     → httpx + BeautifulSoup → clean release notes text
+      ▼
+"[Apr 2026] Custom domain mapping added for private visibility apps..."
+
+Background scheduler (daily):
+asyncio task (every 5 min — checks if digest is due)
+      │  services: ["Code Engine", "watsonx.ai", "Event Streams"]
+      ▼
+agent.invoke("Check what is new for IBM Cloud service: Code Engine")
+      │  → "UPDATE: [Apr 2026] ..."
+agent.invoke("Check what is new for IBM Cloud service: watsonx.ai")
+      │  → "UPDATE: [Mar 2026] ..."
+      ▼
+SMTP digest → DIGEST_TO`,
+    cugaContribution: [
+      'search_ibm_updates uses Tavily scoped to ibm.com + cloud.ibm.com — only real IBM sources, no hallucinated features',
+      'fetch_release_notes strips nav/header/footer before the LLM sees text — agent reads signal, not HTML noise',
+      'UPDATE: protocol — agent decides if changes are meaningful; only real updates trigger email, not empty "no changes" noise',
+      'Background asyncio scheduler fires digests without a cron daemon — daily or weekly, configurable from the UI',
+      'Per-service agent invocations keep context clean — one service per call, no cross-contamination of release notes',
+    ],
+    examples: [
+      "What is new in IBM Code Engine in 2026?",
+      "Latest changes to IBM Cloud Object Storage",
+      "What changed in watsonx.ai recently?",
+      "Any IBM Cloud breaking changes in the last 30 days?",
+      "Summarize IBM Event Streams release notes from this month",
+    ],
+    appUrl: 'http://localhost:18814',
+  },
+  {
     id: 'ibm-cloud-advisor',
     name: 'IBM Cloud Architecture Advisor',
     tagline: 'Describe what you want to build — get real IBM Cloud services, CLI commands, and cost hints',
