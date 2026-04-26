@@ -7,6 +7,10 @@ endpoints and chief_of_staff doesn't change.
 
 Reuses apps/_mcp_bridge.load_tools and apps/_llm.create_llm — read-only
 consumption, no edits to those files.
+
+Phase 3: /agent/reload now accepts an `extra_tools` list — dynamically
+generated tools (e.g. from the OpenAPI source) that are merged into the
+MCP-loaded set. These are httpx-backed StructuredTools built on the fly.
 """
 
 from __future__ import annotations
@@ -19,7 +23,9 @@ import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -34,20 +40,16 @@ for p in (str(_APPS_DIR), str(_REPO_ROOT)):
 log = logging.getLogger("cuga-adapter")
 
 # Default subset chosen so the demo has real gaps to fill via acquisition.
-# Override via MCP_SERVERS env (comma-separated).
 _DEFAULT_SERVERS = "web,local,code"
 
-# Structured tool-gap signal. The agent emits this token followed by a single
-# JSON line; the adapter parses it out, strips the marker from the visible
-# answer, and surfaces the gap to the orchestrator.
 _GAP_MARKER = "[[TOOL_GAP]]"
 _GAP_RE = re.compile(rf"{re.escape(_GAP_MARKER)}\s*(\{{.*?\}})", re.DOTALL)
 
 SYSTEM_INSTRUCTIONS = f"""\
 You are a Chief of Staff agent. You have access to a configurable set of tools
 loaded from MCP servers (web search, knowledge, geo, finance, code, local file
-ops, text processing, invocable APIs). Pick the tools that fit the user's
-question; ignore the rest.
+ops, text processing, invocable APIs) plus dynamically-acquired tools generated
+from public APIs. Pick the tools that fit the user's question; ignore the rest.
 
 If you don't have a tool that fits the user's need, end your reply with this
 exact marker on its own line, followed by a single-line JSON object describing
@@ -57,14 +59,12 @@ the gap:
 {{"capability": "<short phrase>", "inputs": ["<input>", ...], "expected_output": "<what the user wanted>"}}
 
 The capability phrase should be 2-5 words (e.g. "weather lookup", "wikipedia
-search", "geocoding"). The orchestrator may attempt to acquire a matching tool.
-Only emit the marker when you genuinely cannot fulfill the request with any
-tool you currently have. Do not emit it when the user is just chatting.
+search", "geocoding"). The Toolsmith agent may attempt to acquire a matching
+tool. Only emit the marker when you genuinely cannot fulfill the request.
 """
 
 
 def _parse_gap(answer: str) -> tuple[str, dict | None]:
-    """Strip the [[TOOL_GAP]] marker from the answer and return the parsed gap."""
     m = _GAP_RE.search(answer)
     if not m:
         return answer, None
@@ -81,6 +81,7 @@ class _State:
     agent = None
     tools: list = []
     servers_loaded: list[str] = []
+    extra_tools_spec: list[dict] = []   # dicts as received in /agent/reload
     lock: asyncio.Lock = asyncio.Lock()
 
 
@@ -105,12 +106,73 @@ async def _aclose_agent() -> None:
             _State.servers_loaded = []
 
 
-async def _initialize_with_servers(servers: list[str] | None = None) -> None:
-    """(Re-)build the CugaAgent for the given MCP server set.
+# ---------------------------------------------------------------------------
+# Dynamic tool generation — phase 3
+#
+# Given a spec dict like:
+#   {"tool_name": "...", "description": "...", "invoke_url": "...",
+#    "invoke_method": "GET", "invoke_params": {"name": {"type": "string", ...}},
+#    "headers": {"Authorization": "Bearer ..."} (optional)}
+# return a LangChain StructuredTool that calls the URL with httpx.
+# ---------------------------------------------------------------------------
 
-    If servers is None, reads MCP_SERVERS env (or the default subset).
-    Holds _State.lock so concurrent /chat calls don't see a half-built agent.
-    """
+def _build_extra_tool(spec: dict):
+    from langchain_core.tools import StructuredTool  # type: ignore[import-not-found]
+    from pydantic import create_model  # type: ignore[import-not-found]
+
+    name = spec["tool_name"]
+    description = spec.get("description") or name
+    url = spec["invoke_url"]
+    method = (spec.get("invoke_method") or "GET").upper()
+    params_schema = spec.get("invoke_params") or {}
+    headers = spec.get("headers") or {}
+
+    # Build a pydantic model from the params schema for input validation.
+    type_map = {"string": str, "number": float, "integer": int, "boolean": bool}
+    fields = {}
+    for pname, pinfo in params_schema.items():
+        ptype = type_map.get((pinfo or {}).get("type", "string"), str)
+        default = (pinfo or {}).get("default")
+        required = (pinfo or {}).get("required", default is None)
+        if required and default is None:
+            fields[pname] = (ptype, ...)
+        else:
+            fields[pname] = (ptype, default)
+    Args = create_model(f"{name}_args", **fields) if fields else create_model(f"{name}_args")
+
+    path_param_re = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+    path_params = path_param_re.findall(url)
+
+    async def _invoke(**kwargs):
+        u = url
+        kw = dict(kwargs)
+        for pp in path_params:
+            if pp in kw:
+                u = u.replace(f"{{{pp}}}", str(kw.pop(pp)))
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if method == "GET":
+                r = await client.get(u, params=kw, headers=headers)
+            else:
+                r = await client.request(method, u, json=kw, headers=headers)
+            r.raise_for_status()
+            try:
+                return r.json()
+            except ValueError:
+                return r.text
+
+    return StructuredTool.from_function(
+        coroutine=_invoke,
+        name=name,
+        description=description,
+        args_schema=Args,
+    )
+
+
+async def _initialize_with_servers(
+    servers: list[str] | None = None,
+    extra_tools_spec: list[dict] | None = None,
+) -> None:
+    """(Re-)build the CugaAgent for the given MCP server set + extra tools."""
     from _mcp_bridge import load_tools  # noqa: WPS433
     from _llm import create_llm  # noqa: WPS433
     from cuga.sdk import CugaAgent  # noqa: WPS433
@@ -121,16 +183,26 @@ async def _initialize_with_servers(servers: list[str] | None = None) -> None:
             for s in os.environ.get("MCP_SERVERS", _DEFAULT_SERVERS).split(",")
             if s.strip()
         ]
-    log.info("Loading MCP tool sets: %s", servers)
+    if extra_tools_spec is None:
+        extra_tools_spec = list(_State.extra_tools_spec)
+
+    log.info("Loading MCP tool sets: %s + %d extra tools", servers, len(extra_tools_spec))
 
     async with _State.lock:
         await _aclose_agent()
 
         try:
-            tools = load_tools(servers)
+            tools = list(load_tools(servers))
         except Exception as exc:  # noqa: BLE001
             log.exception("MCP tool load failed")
             raise RuntimeError(f"Failed to load MCP tools from {servers}: {exc}") from exc
+
+        # Merge phase-3 generated tools.
+        for spec in extra_tools_spec:
+            try:
+                tools.append(_build_extra_tool(spec))
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to build extra tool: %s", spec.get("tool_name"))
 
         if not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = "sk-placeholder-not-used"
@@ -142,10 +214,12 @@ async def _initialize_with_servers(servers: list[str] | None = None) -> None:
         _State.agent = agent
         _State.tools = tools
         _State.servers_loaded = servers
-        log.info("Cuga adapter ready — %d tools across %d servers", len(tools), len(servers))
+        _State.extra_tools_spec = list(extra_tools_spec)
+        log.info("Cuga adapter ready — %d total tools (%d MCP + %d generated)",
+                 len(tools), len(tools) - len(extra_tools_spec), len(extra_tools_spec))
 
 
-app = FastAPI(title="Cuga Adapter", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Cuga Adapter", version="0.3.0", lifespan=lifespan)
 
 
 class ChatRequest(BaseModel):
@@ -162,6 +236,7 @@ class ChatResponse(BaseModel):
 
 class ReloadRequest(BaseModel):
     servers: list[str]
+    extra_tools: list[dict] = []
 
 
 @app.get("/health")
@@ -170,16 +245,18 @@ async def health() -> dict:
         "status": "ok" if _State.agent is not None else "initializing",
         "servers_loaded": _State.servers_loaded,
         "tool_count": len(_State.tools),
+        "extra_tool_count": len(_State.extra_tools_spec),
     }
 
 
 @app.get("/tools")
 async def list_tools() -> list[dict]:
-    """Return the live tool catalog the agent can plan over."""
+    extra_names = {s.get("tool_name") for s in _State.extra_tools_spec}
     return [
         {
             "name": getattr(t, "name", str(t)),
             "description": getattr(t, "description", "") or "",
+            "kind": "generated" if getattr(t, "name", "") in extra_names else "mcp",
         }
         for t in _State.tools
     ]
@@ -187,16 +264,15 @@ async def list_tools() -> list[dict]:
 
 @app.post("/agent/reload")
 async def reload_agent(req: ReloadRequest) -> dict:
-    """Rebuild the CugaAgent with a new MCP server list. Used by the
-    orchestrator after a catalog acquisition is approved."""
     try:
-        await _initialize_with_servers(req.servers)
+        await _initialize_with_servers(req.servers, req.extra_tools)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {
         "status": "ok",
         "servers_loaded": _State.servers_loaded,
         "tool_count": len(_State.tools),
+        "extra_tool_count": len(_State.extra_tools_spec),
     }
 
 

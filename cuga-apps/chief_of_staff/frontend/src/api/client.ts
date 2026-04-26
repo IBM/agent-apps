@@ -3,10 +3,11 @@ export interface Proposal {
   name: string;
   description: string;
   capabilities: string[];
-  kind: string;
-  auth: string[];
+  source: string;          // "catalog" | "openapi" | (future) "browser"
   score: number;
-  source: string;
+  auth: string[];
+  spec: Record<string, unknown>;
+  probe_result?: Record<string, unknown> | null;
 }
 
 export interface ChatResponse {
@@ -29,6 +30,7 @@ export interface HealthResponse {
   status: string;
   agent_reachable: boolean;
   tools_registered: number;
+  toolsmith_llm: boolean;
 }
 
 export interface CatalogEntry {
@@ -42,7 +44,11 @@ export interface CatalogEntry {
 }
 
 export interface ApproveResult {
-  reload: { status: string; servers_loaded: string[]; tool_count: number };
+  success: boolean;
+  reason: string;
+  reload?: { status: string; servers_loaded?: string[]; tool_count: number; extra_tool_count?: number };
+  probe?: Record<string, unknown> | null;
+  realized?: Record<string, unknown> | null;
   tools_registered: number;
 }
 
@@ -82,24 +88,25 @@ export async function listCatalog(): Promise<CatalogEntry[]> {
   return r.json();
 }
 
-export async function approveTool(catalogId: string): Promise<ApproveResult> {
+export async function approveTool(proposal: Proposal): Promise<ApproveResult> {
   const r = await fetch(`${BASE}/tools/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ catalog_id: catalogId }),
+    body: JSON.stringify({ proposal }),
   });
+  const body = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const detail = await r.text().catch(() => '');
+    const detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body);
     throw new Error(`approve failed: ${r.status} ${detail}`);
   }
-  return r.json();
+  return body as ApproveResult;
 }
 
-export async function denyTool(catalogId: string): Promise<{ status: string }> {
+export async function denyTool(proposalId: string): Promise<{ status: string }> {
   const r = await fetch(`${BASE}/tools/deny`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ catalog_id: catalogId }),
+    body: JSON.stringify({ proposal_id: proposalId }),
   });
   if (!r.ok) throw new Error(`deny failed: ${r.status}`);
   return r.json();

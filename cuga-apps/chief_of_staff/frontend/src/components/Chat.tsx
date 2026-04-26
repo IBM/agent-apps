@@ -44,10 +44,13 @@ export default function Chat({ onToolsChanged }: Props) {
   }
 
   function resolveProposal(turnIndex: number) {
-    return (result: 'approved' | 'denied' | 'dismissed', proposalId?: string) => {
+    return (result: 'approved' | 'denied' | 'failed', proposalId?: string) => {
       setTurns((t) =>
         t.map((turn, i) => {
           if (i !== turnIndex) return turn;
+          // Only remove the card on success or denial; on failure leave it
+          // so the user sees the error and can retry / pick another.
+          if (result === 'failed') return turn;
           const remaining = (turn.proposals ?? []).filter((p) => p.id !== proposalId);
           return { ...turn, proposals: remaining };
         }),

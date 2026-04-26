@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { approveTool, denyTool, Proposal } from '../api/client';
+import { approveTool, denyTool, ApproveResult, Proposal } from '../api/client';
 
 interface Props {
   proposals: Proposal[];
   gap: { capability?: string; expected_output?: string } | null;
-  onResolved: (result: 'approved' | 'denied' | 'dismissed', proposalId?: string) => void;
+  onResolved: (result: 'approved' | 'denied' | 'failed', proposalId?: string, payload?: ApproveResult | string) => void;
 }
+
+const SOURCE_LABEL: Record<string, string> = {
+  catalog: 'Curated catalog',
+  openapi: 'Generated from OpenAPI',
+};
 
 export default function ConsentPrompt({ proposals, gap, onResolved }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -17,10 +22,12 @@ export default function ConsentPrompt({ proposals, gap, onResolved }: Props) {
     setBusy(p.id);
     setError(null);
     try {
-      await approveTool(p.id);
-      onResolved('approved', p.id);
+      const result = await approveTool(p);
+      onResolved('approved', p.id, result);
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      setError(msg);
+      onResolved('failed', p.id, msg);
     } finally {
       setBusy(null);
     }
@@ -50,16 +57,28 @@ export default function ConsentPrompt({ proposals, gap, onResolved }: Props) {
           {gap.expected_output && <> — {gap.expected_output}</>}
         </div>
       )}
-      <div className="text-amber-800 mb-2">Want me to install one of these?</div>
+      <div className="text-amber-800 mb-2">Toolsmith found these candidates:</div>
       <ul className="space-y-2">
         {proposals.map((p) => (
           <li key={p.id} className="bg-white border border-amber-200 rounded p-2">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex-1">
-                <div className="font-semibold text-sm">{p.name}</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm">{p.name}</span>
+                  <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${p.source === 'openapi' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                    {SOURCE_LABEL[p.source] ?? p.source}
+                  </span>
+                </div>
                 <div className="text-xs text-gray-600 mt-0.5">{p.description}</div>
+                {p.source === 'openapi' && p.spec.preview_endpoint != null && (
+                  <div className="text-[11px] text-gray-500 mt-1">
+                    Preview endpoint: <span className="font-mono">{String(p.spec.preview_endpoint)}</span>
+                    {' · base '}
+                    <span className="font-mono">{String(p.spec.base_url ?? '')}</span>
+                  </div>
+                )}
                 <div className="text-xs text-gray-400 mt-1">
-                  match score {p.score} · source {p.source}
+                  match score {p.score}
                   {p.auth.length > 0 && <> · needs: {p.auth.join(', ')}</>}
                 </div>
               </div>
@@ -69,7 +88,7 @@ export default function ConsentPrompt({ proposals, gap, onResolved }: Props) {
                   disabled={busy !== null}
                   className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded px-3 py-1"
                 >
-                  {busy === p.id ? '...' : 'Install'}
+                  {busy === p.id ? '...' : (p.source === 'openapi' ? 'Generate + probe' : 'Install')}
                 </button>
                 <button
                   onClick={() => deny(p)}
@@ -85,7 +104,8 @@ export default function ConsentPrompt({ proposals, gap, onResolved }: Props) {
       </ul>
       {error && <div className="text-xs text-red-700 mt-2">error: {error}</div>}
       <div className="text-xs text-gray-500 mt-2">
-        Installing rebuilds the agent with the new tool — takes ~30 seconds.
+        OpenAPI proposals run a probe call before mounting — only verified
+        tools are registered. Total wait per Install: ~30 s.
       </div>
     </div>
   );

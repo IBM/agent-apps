@@ -37,12 +37,12 @@ class CugaClient(AgentClient):
                 answer=f"[stub:cuga-unreachable] echo: {user_message}",
             )
 
-    async def reload(self, servers: list[str]) -> dict:
+    async def reload(self, servers: list[str], extra_tools: list[dict] | None = None) -> dict:
         # 5-minute timeout — rebuilding the agent + handshaking with all MCP
         # servers takes ~30s in practice but can spike on cold start.
         r = await self._client.post(
             f"{self._url}/agent/reload",
-            json={"servers": servers},
+            json={"servers": servers, "extra_tools": list(extra_tools or [])},
             timeout=300.0,
         )
         r.raise_for_status()

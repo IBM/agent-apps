@@ -1,0 +1,88 @@
+# Phase 3 v1 — curated index of public, no-auth APIs the OpenAPI source
+# can generate tools from. Each entry has:
+#   id            stable string
+#   name          display name
+#   description   what it does, used by the Toolsmith for matching
+#   capabilities  short phrases used by the matcher
+#   spec_url      OpenAPI / synthesized spec endpoint
+#   probe_path    path that's safe to call with no params (probe harness uses this)
+#   probe_params  optional extra params for the probe call
+#
+# Phase 3.5 will replace this with a Smithery / OpenAPI-directory search.
+# Phase 4 will add auth-required APIs (Stripe, GitHub, etc.) once the vault
+# UX is ready.
+
+apis:
+  - id: countries
+    name: Country Info API
+    description: Look up countries by name, capital, region, currency, language, etc.
+    capabilities:
+      - country information
+      - capital city
+      - country lookup
+      - country currency
+      - country population
+      - country region
+    spec_url: https://restcountries.com/v3.1/all?fields=name,capital,region,population,currencies,languages
+    base_url: https://restcountries.com/v3.1
+    endpoints:
+      - tool_name: get_country_by_name
+        description: Get details about a country by its common name (e.g. "France").
+        method: GET
+        path: /name/{name}
+        params:
+          name:
+            type: string
+            description: Country name (case-insensitive).
+            required: true
+        probe_input:
+          name: France
+
+  - id: open_meteo
+    name: Open-Meteo Weather API
+    description: Free weather forecast and historical data, no auth required.
+    capabilities:
+      - weather forecast
+      - temperature lookup
+      - precipitation
+      - hourly weather
+    base_url: https://api.open-meteo.com/v1
+    endpoints:
+      - tool_name: get_open_meteo_forecast
+        description: Current and forecast weather for a latitude/longitude pair.
+        method: GET
+        path: /forecast
+        params:
+          latitude:
+            type: number
+            description: Latitude.
+            required: true
+          longitude:
+            type: number
+            description: Longitude.
+            required: true
+          current_weather:
+            type: boolean
+            description: Include current weather snapshot.
+            required: false
+            default: true
+        probe_input:
+          latitude: 35.6762
+          longitude: 139.6503
+          current_weather: true
+
+  - id: jokes
+    name: Official Joke API
+    description: Random jokes for testing — useful as a sanity probe target.
+    capabilities:
+      - random joke
+      - dad joke
+      - tell me a joke
+    base_url: https://official-joke-api.appspot.com
+    endpoints:
+      - tool_name: get_random_joke
+        description: Return a random joke with setup and punchline.
+        method: GET
+        path: /random_joke
+        params: {}
+        probe_input: {}

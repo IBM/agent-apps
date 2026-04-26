@@ -9,18 +9,22 @@ it hits a gap. Self-contained: nothing outside this directory is modified.
 **Phase 1 — registry + adapter + discovery**
 - Out-of-process cuga adapter wrapping `cuga.sdk.CugaAgent`
 - MCP discovery → SQLite registry, with retry on cold start
-- Right-hand tools panel grouped by source
 - Stub fallback when adapter is unreachable
 
 **Phase 2 — catalog acquisition**
-- **Structured `[[TOOL_GAP]]` signal** — the agent emits a JSON gap when it can't fulfill a request; orchestrator parses it
-- **Catalog** — curated YAML of installable MCP servers ([backend/acquisition/catalog.yaml](backend/acquisition/catalog.yaml))
-- **Token-overlap matcher** — scores catalog entries against the gap; no LLM call needed for phase 2's small catalog
-- **Consent prompt** — modal in chat with Install / Skip per proposal
-- **Live agent reload** — adapter rebuilds the planner with the approved tool included (~30 s)
-- **Activations SQLite** — approved entries persist; orchestrator merges them with the always-on baseline (`MCP_SERVERS` env)
+- Structured `[[TOOL_GAP]]` signal; orchestrator parses it
+- Curated YAML catalog with token-overlap matcher
+- Consent prompt; live agent reload; per-acquisition activations
 
-Not yet (phases 3–5): OpenAPI generation + probe loop, browser fallback, secrets vault, health checks.
+**Phase 3 — Toolsmith agent + OpenAPI generation + autoresearch probe**
+- **Toolsmith agent** ([backend/acquisition/toolsmith.py](backend/acquisition/toolsmith.py)) — the durable, LLM-driven acquisition agent. Defaults to RITS `gpt-oss-120b`. Cuga is the swappable planner; Toolsmith is the brain that owns acquisition.
+- **Source plugin pattern** ([backend/acquisition/sources/](backend/acquisition/sources/)) — `CatalogSource` + `OpenAPISource`. Adding sources is one new file.
+- **OpenAPI source** with curated spec index for no-auth public APIs (Country Info, Open-Meteo, Joke API). Picks an endpoint, builds an executable tool spec.
+- **Probe harness** ([backend/acquisition/probe.py](backend/acquisition/probe.py)) — the autoresearch keep/discard gate. Structural check (HTTP 2xx + valid JSON + non-empty payload) plus optional LLM judge for plausibility. Failed probes block registration.
+- **Live tool mount** — the adapter's `/agent/reload` now accepts an `extra_tools` list. Generated specs become httpx-backed `StructuredTool` instances merged into cuga's tool set, no MCP subprocess.
+- **Vault skeleton** ([backend/acquisition/vault.py](backend/acquisition/vault.py)) — SQLite secrets store, ready for phase 3.5 to wire up auth-required APIs.
+
+Not yet (phases 3.5–6): credential prompt UI, Smithery / openapi-directory search, browser fallback, health checks, cross-domain mining.
 
 ## Run with Docker
 
@@ -145,9 +149,114 @@ curl -s http://localhost:8000/health | jq '.tool_count'
 ### What "passing" means at this stage
 
 Phase 2's bar is: **the agent visibly grows its toolbox in response to
-your questions, with explicit consent, no container restarts.** Phase 3
-will replace the curated catalog with on-the-fly OpenAPI code generation
-and add the autoresearcher-pattern probe loop that gates registration.
+your questions, with explicit consent, no container restarts.**
+
+Phase 3 adds the OpenAPI-generated source and the probe loop — the
+catalog and OpenAPI sources both surface in the same proposal cards now
+(look for the purple "Generated from OpenAPI" tag).
+
+## Phase 3 test plan
+
+### Setup (one-time per build)
+
+```bash
+cd cuga-apps/chief_of_staff
+
+# Optional: configure Toolsmith's LLM. If unset, ranking falls back to
+# pure score order — the loop still works, just less smart about ties.
+export TOOLSMITH_LLM_PROVIDER=rits          # default
+export TOOLSMITH_LLM_MODEL=gpt-oss-120b     # default
+export RITS_API_KEY=...                     # required for the LLM path
+
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+sleep 30
+docker compose ps                           # all 3 Up
+curl -s http://localhost:8765/health | jq   # toolsmith_llm should be true
+```
+
+### Demo 1 — catalog still works (regression)
+
+Same as phase-2 demo: ask *"What's the weather in Tokyo?"* → install the
+**Geo MCP** card → ask again → real answer. Phase 3 must not break this.
+
+### Demo 2 — OpenAPI source (the headline)
+
+Ask: *"Give me information about France: capital, population, currency."*
+
+✅ **Pass:**
+1. Agent emits a gap (no countries tool in default load).
+2. Proposal cards appear. **Country Info API** has a purple `Generated
+   from OpenAPI` tag and shows a preview endpoint (`get_country_by_name`)
+   plus the base URL `https://restcountries.com/v3.1`.
+3. Click **Generate + probe**. Button shows `...`.
+4. Behind the scenes:
+   - Toolsmith calls `OpenAPISource.realize()` → emits a `RealizedTool`
+     with `invoke_url=https://restcountries.com/v3.1/name/{name}` and
+     `sample_input={"name": "France"}`
+   - Probe harness substitutes the path param, calls `GET .../name/France`,
+     verifies 200 + JSON + non-empty payload (and, if RITS is configured,
+     LLM-judges that the response looks like real country data)
+   - On pass, the tool spec is sent to the adapter via `/agent/reload`
+     under `extra_tools`; cuga rebuilds with `get_country_by_name` mounted
+5. Tools panel shows `get_country_by_name` (kind: `generated`).
+6. Re-ask the same question → cuga calls `get_country_by_name(name="France")`
+   → real answer (capital: Paris, population: ~67M, currency: EUR).
+
+### Demo 3 — Probe rejects a broken tool (autoresearch in action)
+
+You can force this by editing [spec_index.yaml](backend/acquisition/sources/spec_index.yaml)
+to point one entry at a URL that 404s, then triggering its acquisition.
+The proposal card will display `error: probe failed: http 404` and the
+tool will **not** be registered. That's the keep/discard gate doing its
+job — phase 3 ships *no* unverified tools.
+
+### Demo 4 — Toolsmith ranking
+
+When both catalog and OpenAPI propose for the same gap, the Toolsmith
+LLM (if configured) re-ranks them. Check the order of cards — the more
+fitting source should be first. With `TOOLSMITH_LLM_PROVIDER` unset the
+ordering falls back to pure score (catalog usually wins for narrow
+gaps; OpenAPI for niche/long-tail).
+
+### API-level checks
+
+```bash
+# Both sources are loaded by the Toolsmith
+curl -s http://localhost:8765/health | jq '.toolsmith_llm'
+
+# Adapter exposes generated-tool count separately
+curl -s http://localhost:8000/health | jq '{tool_count, extra_tool_count}'
+
+# Approve programmatically (skip the UI)
+curl -s -X POST http://localhost:8765/tools/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"proposal":{"id":"openapi:countries","name":"Country Info","description":"x","capabilities":[],"source":"openapi","score":0.5,"auth":[],"spec":{"spec_id":"countries","base_url":"https://restcountries.com/v3.1"}}}' \
+  | jq '{success, reason, "probe_ok": .probe.ok}'
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| No proposal card for OpenAPI gaps | Cuga isn't emitting `[[TOOL_GAP]]`. Phase 4 will replace the marker with structured-output enforcement. |
+| `toolsmith_llm: false` after rebuild | RITS keys not propagated. `docker exec cuga-apps-cos-backend env \| grep RITS` |
+| OpenAPI install fails with `probe failed: network error` | Public API down or container has no internet. Try a different demo. |
+| OpenAPI install fails with `judge: ...` | LLM judge thought the response looked fake. Often false positive — disable by unsetting `TOOLSMITH_LLM_PROVIDER`. |
+
+## Roadmap (phases 4+)
+
+| Phase | Adds | Why |
+|---|---|---|
+| **3.5** | Credential prompt UI + OS keyring integration; auth-required APIs (Stripe, GitHub, Notion) added to spec index | Unlocks the most useful APIs — most of the world's APIs need a key |
+| **3.6** | Smithery / openapi-directory search → catalog grows automatically; LLM matcher replaces token overlap | Removes manual curation as the bottleneck |
+| **4** | Browser-task source — when no API exists at all, drive cuga's web-agent side. Per-task, not persistent. | Covers DoorDash / consumer-app class of problems |
+| **5** | Daily probe of registered tools; quarantine on failure; user notifications | Makes the toolbox self-maintaining as it grows past ~20 tools |
+| **6** | Cross-domain mining over user data the unified app aggregates ("you spend more on Uber Eats the week after a bad sleep score") | The thing siloed apps literally can't ship |
+
+Phase 3.5 is the next stop and probably the biggest user-visible jump,
+because it brings the whole authenticated-API economy into reach.
 
 ## Run without Docker
 
