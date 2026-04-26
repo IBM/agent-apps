@@ -1,0 +1,77 @@
+# =========================================================================
+# chief_of_staff/docker-compose.yml
+#
+# Three services:
+#   chief-of-staff-adapter   wraps cuga.sdk + all MCP tools, port 8000
+#   chief-of-staff-backend   FastAPI shell + registry, port 8765
+#   chief-of-staff-frontend  built React UI, port 5174
+#
+# Joins the parent cuga-apps compose network (`cuga-apps_default`) so the
+# adapter can reach mcp-web, mcp-knowledge, … via service DNS. The parent
+# stack must already be running:
+#
+#     # in cuga-apps/
+#     docker compose up -d
+#
+#     # in cuga-apps/chief_of_staff/
+#     docker compose up --build
+# =========================================================================
+
+name: cuga-apps-chief-of-staff
+
+services:
+  chief-of-staff-adapter:
+    container_name: cuga-apps-cos-adapter
+    build:
+      context: ..               # cuga-apps/, so apps/_mcp_bridge.py is reachable
+      dockerfile: chief_of_staff/Dockerfile.adapter
+    env_file:
+      - ../apps/.env            # reuse the same .env the rest of cuga-apps uses
+    environment:
+      MCP_SERVERS: "web,knowledge,geo,finance,code,local,text,invocable_apis"
+      CUGA_IN_DOCKER: "1"
+    ports:
+      - "8000:8000"
+    networks:
+      - cuga-apps
+      - cos
+    restart: unless-stopped
+
+  chief-of-staff-backend:
+    container_name: cuga-apps-cos-backend
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      CUGA_URL: "http://chief-of-staff-adapter:8000"
+    ports:
+      - "8765:8765"
+    depends_on:
+      - chief-of-staff-adapter
+    networks:
+      - cos
+    restart: unless-stopped
+
+  chief-of-staff-frontend:
+    container_name: cuga-apps-cos-frontend
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile.frontend
+    ports:
+      - "5174:80"
+    depends_on:
+      - chief-of-staff-backend
+    networks:
+      - cos
+    restart: unless-stopped
+
+networks:
+  # External — created by the parent cuga-apps compose. Holds mcp-* services.
+  cuga-apps:
+    name: cuga-apps_default
+    external: true
+
+  # Internal — chief_of_staff's own service-to-service traffic.
+  cos:
+    name: cuga-apps-cos
+    driver: bridge
