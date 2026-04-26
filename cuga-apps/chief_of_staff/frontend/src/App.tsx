@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Chat from './components/Chat';
 import ToolsPanel from './components/ToolsPanel';
 import { health, HealthResponse } from './api/client';
@@ -6,8 +6,9 @@ import { health, HealthResponse } from './api/client';
 export default function App() {
   const [status, setStatus] = useState<'unknown' | 'backend-up' | 'backend-down'>('unknown');
   const [info, setInfo] = useState<HealthResponse | null>(null);
+  const [toolsRev, setToolsRev] = useState(0);
 
-  useEffect(() => {
+  const refreshHealth = useCallback(() => {
     health()
       .then((h) => {
         setStatus('backend-up');
@@ -15,6 +16,16 @@ export default function App() {
       })
       .catch(() => setStatus('backend-down'));
   }, []);
+
+  useEffect(() => {
+    refreshHealth();
+  }, [refreshHealth]);
+
+  // Bump on tool changes so ToolsPanel + header re-fetch.
+  const onToolsChanged = useCallback(() => {
+    setToolsRev((n) => n + 1);
+    refreshHealth();
+  }, [refreshHealth]);
 
   return (
     <div className="h-full flex flex-col bg-white">
@@ -27,9 +38,9 @@ export default function App() {
       </header>
       <main className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-hidden">
-          <Chat />
+          <Chat onToolsChanged={onToolsChanged} />
         </div>
-        <ToolsPanel />
+        <ToolsPanel rev={toolsRev} />
       </main>
     </div>
   );

@@ -1,5 +1,6 @@
 """Smoke test — boots the FastAPI app and round-trips /chat through the stub agent."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,11 @@ from main import app  # noqa: E402
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # Force the stub fallback path: point CUGA_URL at an unroutable address
+    # so the test doesn't depend on what (if anything) happens to be running
+    # on localhost:8000 in the dev environment.
+    monkeypatch.setenv("CUGA_URL", "http://127.0.0.1:1")
     with TestClient(app) as c:
         yield c
 

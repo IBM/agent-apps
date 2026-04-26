@@ -28,7 +28,10 @@ services:
     env_file:
       - ../apps/.env            # reuse the same .env the rest of cuga-apps uses
     environment:
-      MCP_SERVERS: "web,knowledge,geo,finance,code,local,text,invocable_apis"
+      # Default subset chosen so the phase-2 demo has real gaps that the
+      # acquisition flow can fill. Other servers (knowledge, geo, finance,
+      # text, invocable_apis) live in the catalog and are mounted on approval.
+      MCP_SERVERS: "web,local,code"
       CUGA_IN_DOCKER: "1"
     ports:
       - "8000:8000"
@@ -44,6 +47,8 @@ services:
       dockerfile: Dockerfile.backend
     environment:
       CUGA_URL: "http://chief-of-staff-adapter:8000"
+      # Match the adapter so the orchestrator's _baseline_servers() agrees.
+      MCP_SERVERS: "web,local,code"
     ports:
       - "8765:8765"
     depends_on:

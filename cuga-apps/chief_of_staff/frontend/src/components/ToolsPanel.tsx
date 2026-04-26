@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { listTools, refreshTools, ToolRecord } from '../api/client';
 
-export default function ToolsPanel() {
+interface Props {
+  rev?: number;
+}
+
+export default function ToolsPanel({ rev = 0 }: Props) {
   const [tools, setTools] = useState<ToolRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +36,7 @@ export default function ToolsPanel() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [rev]);
 
   const bySource: Record<string, ToolRecord[]> = {};
   for (const t of tools) {

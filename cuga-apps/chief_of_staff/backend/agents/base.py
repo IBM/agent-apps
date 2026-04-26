@@ -7,19 +7,33 @@ That's what makes the planner backend swappable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 
 @dataclass
 class ToolGap:
-    """Signals to the orchestrator that the agent needs a tool it doesn't have.
-
-    Phase 0 doesn't act on this — phases 2+ feed it into the Tool Acquisition Agent.
+    """A structured signal that the agent can't fulfill the request without
+    a tool it doesn't have. The orchestrator passes this to the AcquisitionAgent.
     """
     capability: str
-    inputs: dict
-    expected_output: str
+    inputs: list[str] = field(default_factory=list)
+    expected_output: str = ""
+
+    def to_json(self) -> dict:
+        return {
+            "capability": self.capability,
+            "inputs": list(self.inputs),
+            "expected_output": self.expected_output,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict) -> "ToolGap":
+        return cls(
+            capability=data.get("capability", ""),
+            inputs=list(data.get("inputs", []) or []),
+            expected_output=data.get("expected_output", ""),
+        )
 
 
 @dataclass
@@ -37,6 +51,11 @@ class AgentClient(Protocol):
         user_message: str,
         thread_id: str = "default",
     ) -> AgentResult:
+        ...
+
+    async def reload(self, servers: list[str]) -> dict:
+        """Tell the agent to rebuild itself with a new tool set. Used by
+        the orchestrator after an acquisition is approved."""
         ...
 
     async def health(self) -> bool:

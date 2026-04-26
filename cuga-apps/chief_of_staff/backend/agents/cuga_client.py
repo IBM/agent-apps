@@ -1,8 +1,7 @@
 """Cuga AgentClient — out-of-process HTTP client.
 
-Phase 0 ships this as a stub: if no cuga is reachable at CUGA_URL, it falls back
-to echoing so the chat loop is testable end-to-end without cuga running yet.
-The real wire format is finalized in phase 1 once we look at cuga's surface.
+If no cuga is reachable at CUGA_URL, falls back to echoing so the chat loop
+stays testable while you debug. Real planning happens once the adapter is up.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import os
 
 import httpx
 
-from .base import AgentClient, AgentResult
+from .base import AgentClient, AgentResult, ToolGap
 
 
 class CugaClient(AgentClient):
@@ -20,7 +19,6 @@ class CugaClient(AgentClient):
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def plan_and_execute(self, user_message: str, thread_id: str = "default") -> AgentResult:
-        # Real wire-up happens in phase 1. Until then: try cuga, fall back to echo.
         try:
             r = await self._client.post(
                 f"{self._url}/chat",
@@ -28,11 +26,27 @@ class CugaClient(AgentClient):
             )
             r.raise_for_status()
             data = r.json()
-            return AgentResult(answer=data.get("response", ""))
+            gap = ToolGap.from_json(data["gap"]) if data.get("gap") else None
+            return AgentResult(
+                answer=data.get("response", ""),
+                error=data.get("error"),
+                gap=gap,
+            )
         except (httpx.HTTPError, ValueError):
             return AgentResult(
                 answer=f"[stub:cuga-unreachable] echo: {user_message}",
             )
+
+    async def reload(self, servers: list[str]) -> dict:
+        # 5-minute timeout — rebuilding the agent + handshaking with all MCP
+        # servers takes ~30s in practice but can spike on cold start.
+        r = await self._client.post(
+            f"{self._url}/agent/reload",
+            json={"servers": servers},
+            timeout=300.0,
+        )
+        r.raise_for_status()
+        return r.json()
 
     async def health(self) -> bool:
         try:

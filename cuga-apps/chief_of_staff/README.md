@@ -4,15 +4,23 @@ A single chat UI that aggregates every MCP server in `mcp_servers/*` through
 one cuga planner — and (in later phases) autonomously acquires new tools when
 it hits a gap. Self-contained: nothing outside this directory is modified.
 
-## What's in phase 1
+## What's shipped
 
-- **Cuga adapter** — out-of-process FastAPI service wrapping `cuga.sdk.CugaAgent`. The only seam the orchestrator depends on (swap by writing a sibling adapter).
-- **MCP discovery** — backend syncs the adapter's live tool list into a SQLite registry on startup and on demand.
-- **Tools panel UI** — right-hand sidebar showing the live tool universe, grouped by source, with a refresh button.
-- **Graceful stub fallback** — if the adapter is unreachable, `/chat` echoes instead of 500-ing, so the shell stays usable while you debug.
+**Phase 1 — registry + adapter + discovery**
+- Out-of-process cuga adapter wrapping `cuga.sdk.CugaAgent`
+- MCP discovery → SQLite registry, with retry on cold start
+- Right-hand tools panel grouped by source
+- Stub fallback when adapter is unreachable
 
-Not in phase 1 yet: catalog search, OpenAPI generation, browser fallback,
-secrets vault, health checks. Those come in phases 2–5.
+**Phase 2 — catalog acquisition**
+- **Structured `[[TOOL_GAP]]` signal** — the agent emits a JSON gap when it can't fulfill a request; orchestrator parses it
+- **Catalog** — curated YAML of installable MCP servers ([backend/acquisition/catalog.yaml](backend/acquisition/catalog.yaml))
+- **Token-overlap matcher** — scores catalog entries against the gap; no LLM call needed for phase 2's small catalog
+- **Consent prompt** — modal in chat with Install / Skip per proposal
+- **Live agent reload** — adapter rebuilds the planner with the approved tool included (~30 s)
+- **Activations SQLite** — approved entries persist; orchestrator merges them with the always-on baseline (`MCP_SERVERS` env)
+
+Not yet (phases 3–5): OpenAPI generation + probe loop, browser fallback, secrets vault, health checks.
 
 ## Run with Docker
 
@@ -60,58 +68,86 @@ stack is untouched.
 
 ## What to look at / test
 
+The phase-2 demo flow: start with a small toolbox, ask something it can't
+answer, watch it offer to install the missing tool, approve, and ask again.
+
+### Setup
+
+```bash
+# Pull the latest changes, then force-rebuild (the adapter and frontend both
+# changed; the backend changed too).
+cd cuga-apps/chief_of_staff
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+docker compose ps   # all 3 should be Up
+```
+
 Open **http://localhost:5174**.
 
-### ✅ Should pass — the shell
+### ✅ Initial state — small toolbox by design
 
-1. **Page loads with the chat surface and a right-hand "Tools" panel.**
-2. **Header reads** `backend: backend-up · agent: reachable · tools: N` — `N`
-   is the number of MCP tools discovered. Expect 30+ across 8 servers.
-3. **Tools panel groups by source** under `MCP_SERVER` and lists each tool
-   name + a one-line description (e.g. `web_search`, `get_weather`,
-   `geocode`, `get_wikipedia_article`, …).
-4. **Click "refresh"** in the tools panel — re-syncs from the adapter,
-   number stays stable.
-5. **Backend `/health` directly** at http://localhost:8765/health returns
-   `{"status":"ok","agent_reachable":true,"tools_registered":N}`.
-6. **Adapter `/tools` directly** at http://localhost:8000/tools returns
-   the raw tool list the registry was built from.
+1. **Header** reads `backend: backend-up · agent: reachable · tools: 10–15`.
+   That's intentionally a subset — the adapter's `MCP_SERVERS` defaults to
+   `web,local,code` so phase 2 has real gaps to fill.
+2. **Tools panel** shows entries from those three servers only. No `geo`,
+   `knowledge`, `finance`, etc. yet.
 
-### ✅ Should pass — graceful degradation
+### ✅ The acquisition flow
 
-7. **Stop just the adapter:**
-   ```bash
-   docker stop cuga-apps-cos-adapter
-   ```
-   - Header switches to `agent: stub`.
-   - Chat still responds, with `[stub:cuga-unreachable] echo: <your text>`.
-   - Tools panel keeps showing the previously synced list (it's persisted
-     in SQLite); refresh now reports 0 synced and clears the list.
-   - Bring the adapter back: `docker start cuga-apps-cos-adapter`, then
-     hit refresh — tools repopulate.
+3. **Type:** *"What's the weather in Tokyo right now?"*
+   - The agent should reply that it can't help with weather, and the
+     orchestrator should attach **proposal cards** under the agent's reply.
+   - Top proposal should be **"Geo MCP"** with a high match score.
+4. **Click "Install"** on the Geo MCP card.
+   - The button shows `...` for ~30 s while the adapter rebuilds with
+     `web,local,code,geo`.
+   - When done, the proposal disappears and the right-hand Tools panel
+     refreshes — you should now see a `geo` group with `get_weather`,
+     `geocode`, etc.
+5. **Re-type:** *"What's the weather in Tokyo right now?"*
+   - This time the agent should call `get_weather` and return a real answer.
 
-### ✅ Should pass — real planning (only if LLM key is set)
+### ✅ More variations to try
 
-8. **Type:** *"What's the weather like in Paris this week?"*
-   - cuga should pick `get_weather` from `mcp-geo`.
-   - Response should be the agent's textual answer, not a tool dump.
-   - Backend log shows the round-trip; adapter log shows tool calls.
+| Ask | Expected proposal | Expected tools after install |
+|---|---|---|
+| *"Look up the Eiffel Tower on Wikipedia"* | Knowledge MCP | `get_wikipedia_article`, `search_wikipedia` |
+| *"What's NVIDIA's stock price?"* | Finance MCP | `get_quote`, market data tools |
+| *"Extract the text from this PDF"* | Text MCP | document parsing tools |
 
-9. **Type:** *"Search Wikipedia for the history of the Eiffel Tower"*
-   - cuga should pick `get_wikipedia_article` or `search_wikipedia` from
-     `mcp-knowledge`.
+### ✅ Decline path
 
-10. **Type something the agent has no tool for**, e.g.
-    *"Place an order on DoorDash for my usual"*. The agent should respond
-    with a `[TOOL GAP]` line declaring what it's missing — that's the
-    signal phase 3's acquisition agent will hook into.
+6. Trigger another gap (e.g. *"find me a hike near Boulder"*) → click
+   **"Skip"** on the Geo proposal (if you had reverted) → the proposal
+   disappears, the agent stays as-is, and the activation is recorded as
+   denied (won't be auto-mounted on next restart).
 
-### What "passing" means right now
+### ✅ API-level checks (skip if UI works)
 
-Phase 1's bar is: **a single chat surface that visibly aggregates the union
-of all MCP tools and round-trips real planning through an out-of-process
-agent backend.** Anything beyond that — actually growing the toolbox at
-runtime — lands in phase 2 and phase 3.
+```bash
+# Catalog with current activation state
+curl -s http://localhost:8765/catalog | jq
+
+# What the agent currently has
+curl -s http://localhost:8000/tools | jq 'length'   # tool count
+curl -s http://localhost:8765/tools | jq 'length'   # registry count — should match
+
+# Approve programmatically
+curl -s -X POST http://localhost:8765/tools/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"catalog_id":"geo"}'
+
+# Check the agent now has more tools
+curl -s http://localhost:8000/health | jq '.tool_count'
+```
+
+### What "passing" means at this stage
+
+Phase 2's bar is: **the agent visibly grows its toolbox in response to
+your questions, with explicit consent, no container restarts.** Phase 3
+will replace the curated catalog with on-the-fly OpenAPI code generation
+and add the autoresearcher-pattern probe loop that gates registration.
 
 ## Run without Docker
 

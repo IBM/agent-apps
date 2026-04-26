@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from orchestrator import Orchestrator
-from registry.discovery import sync_from_adapter
+from registry.discovery import sync_from_adapter, sync_with_retry
 from registry.store import ToolRegistry
 
 
@@ -24,7 +25,9 @@ async def lifespan(app: FastAPI):
     _orchestrator = Orchestrator()
     _registry = ToolRegistry()
     adapter_url = os.environ.get("CUGA_URL", "http://localhost:8000")
-    await sync_from_adapter(_registry, adapter_url)
+    # Adapter takes ~30s to handshake with all MCP servers on cold start.
+    # Retry in the background so we don't block backend startup.
+    asyncio.create_task(sync_with_retry(_registry, adapter_url))
     try:
         yield
     finally:
@@ -34,7 +37,7 @@ async def lifespan(app: FastAPI):
             _registry.close()
 
 
-app = FastAPI(title="Chief of Staff", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Chief of Staff", version="0.2.0", lifespan=lifespan)
 
 # Frontend dev server is on a different port; allow it to call us.
 app.add_middleware(
@@ -54,6 +57,12 @@ class ChatResponse(BaseModel):
     response: str
     thread_id: str
     error: str | None = None
+    gap: dict | None = None
+    proposals: list[dict] = []
+
+
+class ApproveRequest(BaseModel):
+    catalog_id: str
 
 
 @app.get("/health")
@@ -89,12 +98,61 @@ async def refresh_tools() -> dict:
     return {"synced": n}
 
 
+@app.get("/catalog")
+async def catalog() -> list[dict]:
+    """Expose the catalog so the UI can browse what's available even when
+    no gap has been triggered."""
+    if not _orchestrator:
+        return []
+    return [
+        {
+            "id": e.id,
+            "name": e.name,
+            "description": e.description,
+            "capabilities": list(e.capabilities),
+            "kind": e.kind,
+            "auth": list(e.auth),
+            "active": e.id in _orchestrator.activations.active_ids(),
+        }
+        for e in _orchestrator.catalog.entries
+    ]
+
+
+@app.post("/tools/approve")
+async def approve_tool(req: ApproveRequest) -> dict:
+    """Approve a catalog entry and reload the planner with it included."""
+    if not _orchestrator or not _registry:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        reload_result = await _orchestrator.approve(req.catalog_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    # Sync the registry so the tools panel reflects the new tools.
+    adapter_url = os.environ.get("CUGA_URL", "http://localhost:8000")
+    synced = await sync_from_adapter(_registry, adapter_url)
+    return {"reload": reload_result, "tools_registered": synced}
+
+
+@app.post("/tools/deny")
+async def deny_tool(req: ApproveRequest) -> dict:
+    """Mark a catalog entry as denied. Does not reload — the planner keeps
+    its current servers; the entry just won't auto-mount on next restart."""
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    await _orchestrator.deny(req.catalog_id)
+    return {"status": "denied", "catalog_id": req.catalog_id}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     assert _orchestrator is not None
-    result = await _orchestrator.chat(req.message, thread_id=req.thread_id)
+    turn = await _orchestrator.chat(req.message, thread_id=req.thread_id)
     return ChatResponse(
-        response=result.answer,
+        response=turn.answer,
         thread_id=req.thread_id,
-        error=result.error,
+        error=turn.error,
+        gap=turn.gap,
+        proposals=turn.proposals,
     )
