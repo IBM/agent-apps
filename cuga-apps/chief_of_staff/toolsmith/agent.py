@@ -44,16 +44,38 @@ for _p in (str(_BACKEND), str(_REPO_ROOT)):
 _TOOLSMITH_SYSTEM_PROMPT = """\
 You are Toolsmith, an agent that builds tools to fill capability gaps.
 
-When given a gap, your job is to:
-  1. Check the existing user toolbox and the curated catalog.
-  2. If neither covers it, search the OpenAPI spec index.
-  3. Pick the best candidate and gather its endpoint detail.
-  4. Use the Coder to generate Python source for a tool.
-  5. Probe the generated tool with the sample input.
-  6. If the probe passes, register it as a persistent artifact.
-  7. If the probe fails, you may regenerate code with feedback OR give up.
+When given a gap, work through these tiers in order until one succeeds:
 
-Always probe BEFORE registering. Never register an unverified tool.
+  Tier 1 — Existing toolbox & curated catalog (fastest, most reliable)
+    - Check what's already installed (list_existing_tools).
+    - Search the curated catalog (search_catalog).
+
+  Tier 2 — Public APIs (general coverage, OpenAPI-driven)
+    - Search the curated OpenAPI index (search_openapi_index) and the
+      broader APIs.guru directory (search_apis_guru_directory).
+    - Pick the best candidate, gather endpoint detail
+      (describe_openapi_endpoint), generate code (generate_tool_code),
+      probe (probe_generated_tool), then register (register_tool_artifact).
+
+  Tier 3 — Curated browser tasks (last resort, for sites without APIs)
+    - When a gap clearly involves a website that does NOT expose an API
+      — school portals, utility billing UIs, school grade systems,
+      employee self-service portals, anything where "log into the site
+      and read the page" is the only path — use search_browser_tasks
+      to look for a curated template, then mount_browser_task to
+      register it. If the template requires secrets that aren't set,
+      mount_browser_task returns needs_secrets — STOP there; do not
+      retry. The orchestrator will ask the user for credentials.
+
+Strong signal that you should jump straight to Tier 3:
+  - The gap mentions "portal", "login required", "behind a login",
+    "school", "internal site", "bill", "dashboard", or names a site
+    with no public API.
+
+Always probe BEFORE registering APIs. Never register an unverified tool.
+Browser tasks may be registered without remote probing — the runner
+validates the steps at execution time.
+
 Be terse — your reasoning becomes the audit trail. When done, end with a
 final message describing what you built (or why you couldn't).
 """
@@ -98,11 +120,13 @@ class Toolsmith:
         self._browser_source = BrowserSource()
         self._vault = Vault()
 
-        # Build the agent's tool belt once.
+        # Build the agent's tool belt once. Browser source is wired in so
+        # the ReAct loop has access to search_browser_tasks / mount_browser_task.
         self._toolbelt = build_toolbelt(
             coder=self._coder, store=self._store, catalog=self._catalog,
             openapi_source=self._openapi_source, vault=self._vault,
             mounted_callback=self._on_change,
+            browser_source=self._browser_source,
         )
 
     @property
@@ -134,7 +158,7 @@ class Toolsmith:
         """Phase 4 — realize a curated browser task, check secret availability,
         optionally probe via the browser-runner, and register."""
         import os
-        from toolsmith.artifact import make_id_from
+        from .artifact import make_id_from
         realized = await self._browser_source.realize(proposal)
         prospective_id = make_id_from(realized.tool_name, source="browser")
 
@@ -256,9 +280,19 @@ class Toolsmith:
         transcript = _extract_transcript(result)
         artifact_id = _last_registered_id(transcript)
         if artifact_id is None:
-            return AcquireResult(success=False, artifact_id=None,
-                                 summary="Toolsmith did not register a tool.",
-                                 transcript=transcript)
+            # The ReAct path may have hit a needs_secrets response from
+            # mount_browser_task (or any tool that surfaces blocked-on-creds).
+            # Surface it cleanly so the UI can prompt for credentials —
+            # without this, the user sees a generic "couldn't build a tool"
+            # and there's no way to unblock.
+            needs = _last_needs_secrets(transcript)
+            summary = _final_message(result) or "Toolsmith did not register a tool."
+            return AcquireResult(
+                success=False, artifact_id=None,
+                summary=summary,
+                transcript=transcript,
+                needs_secrets=needs,
+            )
         return AcquireResult(success=True, artifact_id=artifact_id,
                              summary=_final_message(result),
                              transcript=transcript)
@@ -518,6 +552,37 @@ def _final_message(react_result: Any) -> str:
     if not msgs:
         return ""
     return str(getattr(msgs[-1], "content", ""))
+
+
+def _last_needs_secrets(transcript: list[dict]) -> Optional[dict]:
+    """Walk the transcript backwards looking for a tool response that
+    declared blocked-on-credentials. Used when the ReAct path tried
+    mount_browser_task (or similar) and got back needs_secrets — the UI
+    needs that payload to render the credential prompt."""
+    for entry in reversed(transcript):
+        if entry.get("role") != "tool":
+            continue
+        content = entry.get("content", "")
+        if "\"needs_secrets\"" not in content:
+            continue
+        try:
+            obj = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        ns = obj.get("needs_secrets")
+        if isinstance(ns, dict):
+            # Fill in fields the UI's CredentialPrompt expects but the
+            # tool may not have populated.
+            ns.setdefault("api_name", ns.get("tool_name", ""))
+            ns.setdefault("auth", {"type": "browser_session"})
+            ns.setdefault(
+                "help",
+                "Browser tasks need login credentials. They're stored "
+                "locally in the vault and only sent to the browser-runner; "
+                "never logged.",
+            )
+            return ns
+    return None
 
 
 def _fallback_stub_code(realized, auth_meta: dict | None = None) -> str:

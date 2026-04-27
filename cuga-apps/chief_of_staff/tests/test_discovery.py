@@ -30,8 +30,8 @@ async def test_sync_unreachable_adapter_returns_zero(registry, monkeypatch):
 @pytest.mark.asyncio
 async def test_sync_writes_tools(registry, monkeypatch):
     fake_payload = [
-        {"name": "web_search", "description": "Search the web."},
-        {"name": "get_weather", "description": "Weather lookup."},
+        {"name": "web_search", "description": "Search the web.", "kind": "mcp", "server": "web"},
+        {"name": "get_weather", "description": "Weather lookup.", "kind": "mcp", "server": "geo"},
     ]
 
     class _FakeResp:
@@ -51,4 +51,5 @@ async def test_sync_writes_tools(registry, monkeypatch):
     assert n == 2
     names = sorted(r.name for r in registry.all())
     assert names == ["get_weather", "web_search"]
-    assert all(r.source == "mcp_server" for r in registry.all())
+    sources = sorted(r.source for r in registry.all())
+    assert sources == ["mcp:geo", "mcp:web"]

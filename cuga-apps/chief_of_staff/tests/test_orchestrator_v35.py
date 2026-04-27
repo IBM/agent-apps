@@ -25,7 +25,7 @@ class _StubPlanner(AgentClient):
     async def plan_and_execute(self, message, thread_id="default"):
         return self.next_result
 
-    async def reload(self, servers, extra_tools=None, secrets=None):
+    async def reload(self, servers, extra_tools=None, secrets=None, disabled_tools=None):
         self.reload_calls.append((list(servers), list(extra_tools or []), dict(secrets or {})))
         return {"status": "ok", "servers_loaded": list(servers),
                 "tool_count": len(servers) * 5 + len(extra_tools or []),

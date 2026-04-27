@@ -34,11 +34,15 @@ for _p in (str(_BACKEND), str(_REPO_ROOT)):
         sys.path.insert(0, _p)
 
 
-def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callback):
+def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callback,
+                   browser_source=None):
     """Return the list of LangChain @tool callables for the ReAct agent.
 
     mounted_callback(artifact) is invoked after successful registration so
     the service can notify whoever cares (the backend, in our case).
+    browser_source is the third-tier fallback (Playwright tasks) — when
+    None, the browser-search/mount tools are simply omitted so older callers
+    keep working.
     """
     from langchain_core.tools import tool  # type: ignore[import-not-found]
 
@@ -246,7 +250,91 @@ def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callbac
         scored.sort(key=lambda x: x["score"], reverse=True)
         return json.dumps(scored[:5])
 
-    return [
+    # ── Browser-task tools (phase 4) ─────────────────────────────────────
+    # Without these the ReAct agent has no way to discover or mount
+    # curated browser tasks (school portals, bill-pay UIs, sites without
+    # APIs). The deterministic fallback knows about them, but the ReAct
+    # path has to be told explicitly.
+    @tool
+    async def search_browser_tasks(capability: str) -> str:
+        """Search the curated browser-task templates for matches against a
+        capability. Use this when no API source covers the gap — typical
+        cases are sites without APIs (school portals, internal tools,
+        scraped pages). Returns JSON: list of {id, name, description,
+        score, requires_secrets, task_id}."""
+        if browser_source is None:
+            return json.dumps({"error": "browser source not configured"})
+        proposals = await browser_source.propose({"capability": capability}, top_k=5)
+        return json.dumps([
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "score": round(p.score, 3),
+                "requires_secrets": list(p.auth or []),
+                "task_id": p.spec.get("task_id"),
+            }
+            for p in proposals
+        ])
+
+    @tool
+    async def mount_browser_task(task_id: str, capability: str) -> str:
+        """Realize and register a curated browser task as a persistent
+        artifact (kind=browser_task). The cuga adapter dispatches calls
+        to the browser-runner service. If the task declares required
+        secrets that aren't in the vault, returns {needs_secrets:[…]}
+        instead of registering — the orchestrator surfaces that to the
+        user."""
+        if browser_source is None:
+            return json.dumps({"error": "browser source not configured"})
+
+        # Re-resolve the proposal so we have the full spec.
+        proposals = await browser_source.propose({"capability": capability}, top_k=5)
+        match = next((p for p in proposals if p.spec.get("task_id") == task_id), None)
+        if match is None:
+            return json.dumps({"error": f"unknown browser task_id: {task_id}"})
+
+        realized = await browser_source.realize(match)
+        prospective_id = make_id_from(realized.tool_name, source="browser")
+        required = list(realized.requires_secrets or [])
+        missing = vault.missing(prospective_id, required) if required else []
+        if missing:
+            return json.dumps({
+                "needs_secrets": {
+                    "tool_id": prospective_id,
+                    "tool_name": realized.tool_name,
+                    "missing": missing,
+                    "required": required,
+                },
+                "registered": False,
+            })
+
+        task = browser_source.by_id(task_id)
+        artifact = ToolArtifact(
+            manifest=ToolManifest(
+                id=prospective_id,
+                name=realized.tool_name,
+                description=realized.description,
+                parameters_schema=realized.invoke_params,
+                requires_secrets=required,
+                provenance={
+                    "source": "browser", "task_id": task_id,
+                    "created_at": now_iso(),
+                },
+                kind="browser_task",
+                steps=list(task.steps) if task else [],
+            ),
+            code="",
+        )
+        store.save(artifact)
+        await mounted_callback(artifact)
+        return json.dumps({
+            "registered": True,
+            "artifact_id": artifact.manifest.id,
+            "tool_name": realized.tool_name,
+        })
+
+    base = [
         search_catalog,
         search_openapi_index,
         describe_openapi_endpoint,
@@ -258,3 +346,6 @@ def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callbac
         check_secret_available,
         search_apis_guru_directory,
     ]
+    if browser_source is not None:
+        base.extend([search_browser_tasks, mount_browser_task])
+    return base
