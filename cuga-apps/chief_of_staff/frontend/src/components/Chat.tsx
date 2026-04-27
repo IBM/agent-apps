@@ -1,12 +1,11 @@
 import { FormEvent, useState } from 'react';
-import { ChatResponse, Proposal, sendChat } from '../api/client';
-import ConsentPrompt from './ConsentPrompt';
+import { AcquisitionResult, ChatResponse, sendChat } from '../api/client';
 
 type Turn = {
   role: 'user' | 'agent';
   text: string;
-  proposals?: Proposal[];
   gap?: ChatResponse['gap'];
+  acquisition?: AcquisitionResult | null;
 };
 
 interface Props {
@@ -32,10 +31,13 @@ export default function Chat({ onToolsChanged }: Props) {
         {
           role: 'agent',
           text: r.error ? `error: ${r.error}` : r.response || '(no answer)',
-          proposals: r.proposals,
           gap: r.gap,
+          acquisition: r.acquisition,
         },
       ]);
+      if (r.acquisition?.success) {
+        onToolsChanged?.();
+      }
     } catch (err) {
       setTurns((t) => [...t, { role: 'agent', text: `error: ${(err as Error).message}` }]);
     } finally {
@@ -43,30 +45,12 @@ export default function Chat({ onToolsChanged }: Props) {
     }
   }
 
-  function resolveProposal(turnIndex: number) {
-    return (result: 'approved' | 'denied' | 'failed', proposalId?: string) => {
-      setTurns((t) =>
-        t.map((turn, i) => {
-          if (i !== turnIndex) return turn;
-          // Only remove the card on success or denial; on failure leave it
-          // so the user sees the error and can retry / pick another.
-          if (result === 'failed') return turn;
-          const remaining = (turn.proposals ?? []).filter((p) => p.id !== proposalId);
-          return { ...turn, proposals: remaining };
-        }),
-      );
-      if (result === 'approved') {
-        onToolsChanged?.();
-      }
-    };
-  }
-
   return (
     <div className="flex flex-col h-full max-w-3xl mx-auto p-4">
       <div className="flex-1 overflow-y-auto space-y-3 pb-4">
         {turns.length === 0 && (
           <div className="text-gray-400 text-sm">
-            Ask anything. If I'm missing a tool, I'll offer to install one.
+            Ask anything. If I'm missing a tool, Toolsmith will build one and tell you.
           </div>
         )}
         {turns.map((t, i) => (
@@ -81,13 +65,7 @@ export default function Chat({ onToolsChanged }: Props) {
             >
               {t.text}
             </div>
-            {t.role === 'agent' && t.proposals && t.proposals.length > 0 && (
-              <ConsentPrompt
-                proposals={t.proposals}
-                gap={t.gap ?? null}
-                onResolved={resolveProposal(i)}
-              />
-            )}
+            {t.role === 'agent' && t.acquisition && <AcquisitionNotice acquisition={t.acquisition} />}
           </div>
         ))}
       </div>
@@ -107,6 +85,31 @@ export default function Chat({ onToolsChanged }: Props) {
           {pending ? '...' : 'Send'}
         </button>
       </form>
+    </div>
+  );
+}
+
+function AcquisitionNotice({ acquisition }: { acquisition: AcquisitionResult }) {
+  const ok = acquisition.success;
+  return (
+    <div
+      className={
+        'border rounded-lg p-2 text-xs ' +
+        (ok ? 'border-green-300 bg-green-50' : 'border-amber-300 bg-amber-50')
+      }
+    >
+      <div className={'font-semibold ' + (ok ? 'text-green-900' : 'text-amber-900')}>
+        {ok ? 'Toolsmith built a tool' : 'Toolsmith couldn\'t build a tool'}
+      </div>
+      <div className={ok ? 'text-green-800' : 'text-amber-800'}>{acquisition.summary}</div>
+      {acquisition.artifact_id && (
+        <div className="text-gray-500 mt-0.5 font-mono">{acquisition.artifact_id}</div>
+      )}
+      {ok && (
+        <div className="text-gray-600 mt-1">
+          Try asking again — the new tool is now available.
+        </div>
+      )}
     </div>
   );
 }

@@ -1,13 +1,11 @@
-"""Smoke test — boots the FastAPI app and round-trips /chat through the stub agent."""
+"""Smoke test — boots the FastAPI backend and round-trips /chat through the stub planner."""
 
-import os
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-# Make backend/ importable when run from repo root.
 _BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(_BACKEND))
 
@@ -16,10 +14,11 @@ from main import app  # noqa: E402
 
 @pytest.fixture
 def client(monkeypatch):
-    # Force the stub fallback path: point CUGA_URL at an unroutable address
-    # so the test doesn't depend on what (if anything) happens to be running
-    # on localhost:8000 in the dev environment.
+    # Both downstream services unreachable → the orchestrator's stub
+    # fallback paths kick in. This validates the wiring without needing
+    # cuga or the toolsmith service running.
     monkeypatch.setenv("CUGA_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("TOOLSMITH_URL", "http://127.0.0.1:1")
     with TestClient(app) as c:
         yield c
 
@@ -27,28 +26,37 @@ def client(monkeypatch):
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    body = r.json()
+    assert body["status"] == "ok"
+    assert "tools_registered" in body
+    assert "toolsmith" in body
 
 
-def test_chat_echoes_when_cuga_unreachable(client):
+def test_chat_echoes_when_planner_unreachable(client):
     r = client.post("/chat", json={"message": "hello"})
     assert r.status_code == 200
     body = r.json()
-    # Stub falls back to echo when no cuga is running on CUGA_URL.
     assert "hello" in body["response"]
     assert body["thread_id"] == "default"
+    assert body["acquisition"] is None  # no gap, no acquisition triggered
 
 
 def test_tools_endpoint_returns_list(client):
-    # With no adapter running, the discovery sync writes no rows. /tools
-    # should still respond with an empty list rather than 500.
     r = client.get("/tools")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
 
 
-def test_health_includes_tool_count(client):
-    r = client.get("/health")
+def test_artifacts_endpoint_returns_list(client):
+    r = client.get("/toolsmith/artifacts")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_artifacts_changed_webhook(client):
+    # Fires a resync; with both services unreachable it gracefully fails
+    # but the endpoint must still return 200 (or a structured error).
+    r = client.post("/internal/artifacts_changed")
+    assert r.status_code == 200
     body = r.json()
-    assert "tools_registered" in body
-    assert isinstance(body["tools_registered"], int)
+    assert "ok" in body

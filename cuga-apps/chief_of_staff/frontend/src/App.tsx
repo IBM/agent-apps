@@ -19,21 +19,32 @@ export default function App() {
 
   useEffect(() => {
     refreshHealth();
+    const i = setInterval(refreshHealth, 10_000);
+    return () => clearInterval(i);
   }, [refreshHealth]);
 
-  // Bump on tool changes so ToolsPanel + header re-fetch.
   const onToolsChanged = useCallback(() => {
     setToolsRev((n) => n + 1);
     refreshHealth();
   }, [refreshHealth]);
 
+  const ts = info?.toolsmith;
   return (
     <div className="h-full flex flex-col bg-white">
       <header className="border-b px-4 py-3 flex items-center justify-between">
         <h1 className="text-lg font-semibold">Chief of Staff</h1>
-        <div className="text-xs text-gray-500">
-          backend: {status} · agent: {info?.agent_reachable ? 'reachable' : 'stub'} ·
-          tools: {info?.tools_registered ?? 0}
+        <div className="text-xs text-gray-500 space-x-2">
+          <span>backend: {status}</span>
+          <span>·</span>
+          <span>planner: {info?.planner_reachable ? 'reachable' : 'stub'}</span>
+          <span>·</span>
+          <span>
+            toolsmith: {ts?.status ?? 'unknown'}
+            {ts?.coder ? ` (coder: ${ts.coder}` : ''}
+            {ts?.coder ? `, llm: ${ts.orchestration_llm ? 'on' : 'off'})` : ''}
+          </span>
+          <span>·</span>
+          <span>tools: {info?.tools_registered ?? 0}</span>
         </div>
       </header>
       <main className="flex-1 flex overflow-hidden">

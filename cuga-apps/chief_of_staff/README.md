@@ -16,25 +16,31 @@ it hits a gap. Self-contained: nothing outside this directory is modified.
 - Curated YAML catalog with token-overlap matcher
 - Consent prompt; live agent reload; per-acquisition activations
 
-**Phase 3 — Toolsmith agent + OpenAPI generation + autoresearch probe**
-- **Toolsmith agent** ([backend/acquisition/toolsmith.py](backend/acquisition/toolsmith.py)) — the durable, LLM-driven acquisition agent. Defaults to RITS `gpt-oss-120b`. Cuga is the swappable planner; Toolsmith is the brain that owns acquisition.
-- **Source plugin pattern** ([backend/acquisition/sources/](backend/acquisition/sources/)) — `CatalogSource` + `OpenAPISource`. Adding sources is one new file.
-- **OpenAPI source** with curated spec index for no-auth public APIs (Country Info, Open-Meteo, Joke API). Picks an endpoint, builds an executable tool spec.
-- **Probe harness** ([backend/acquisition/probe.py](backend/acquisition/probe.py)) — the autoresearch keep/discard gate. Structural check (HTTP 2xx + valid JSON + non-empty payload) plus optional LLM judge for plausibility. Failed probes block registration.
-- **Live tool mount** — the adapter's `/agent/reload` now accepts an `extra_tools` list. Generated specs become httpx-backed `StructuredTool` instances merged into cuga's tool set, no MCP subprocess.
-- **Vault skeleton** ([backend/acquisition/vault.py](backend/acquisition/vault.py)) — SQLite secrets store, ready for phase 3.5 to wire up auth-required APIs.
+**Phase 3 — OpenAPI generation + autoresearch probe**
+- Source plugin pattern with `CatalogSource` + `OpenAPISource`
+- Probe harness (structural + optional LLM judge) — the autoresearch keep/discard gate
+- Live tool mounting via the cuga adapter's `extra_tools`
 
-Not yet (phases 3.5–6): credential prompt UI, Smithery / openapi-directory search, browser fallback, health checks, cross-domain mining.
+**Phase 3.5 — Toolsmith service + Coder abstraction + persistent ToolArtifacts**
+- **[Toolsmith service](toolsmith/)** — own FastAPI app on port 8001, LangGraph ReAct agent with its own tool belt. The cuga adapter is the swappable planner; Toolsmith is the durable, swap-resistant brain.
+- **Internal tool belt** — search_catalog, search_openapi_index, generate_tool_code, probe_generated_tool, register_tool_artifact, etc. NOT MCP tools — agent tools the Toolsmith calls. ([toolsmith/tools/build.py](toolsmith/tools/build.py))
+- **Coder abstraction** — pluggable code-generation specialist. `TOOLSMITH_CODER=gpt_oss` (RITS gpt-oss-120b) or `TOOLSMITH_CODER=claude` (Sonnet 4.6 via Anthropic SDK). One-line A/B switch.
+- **ToolArtifact** — canonical disk-persisted tool format at `data/tools/<id>/{manifest.yaml, tool.py, probe.json}`. Multiple bindings (LangChain, MCP, OpenAPI doc) computed from one source of truth.
+- **Reusability** — tools survive restarts; backend startup pulls Toolsmith's `/effective_state` and reloads cuga with the union.
+- **Dumb UI** — chat surface plus tools panel. No consent modal. Toolsmith decides; UI shows what happened.
+
+Not yet (phases 4+): web search for arbitrary specs, browser source for no-API sites, health checks + auto-quarantine, cross-domain mining.
 
 ## Run with Docker
 
-The cleanest way to take a look. Three containers come up:
+The cleanest way to take a look. **Four** containers come up now (Toolsmith joined the party):
 
 | Container | Port | What it does |
 |---|---|---|
-| `cuga-apps-cos-adapter` | 8000 | Wraps cuga.sdk + all 8 MCP tool sets |
-| `cuga-apps-cos-backend` | 8765 | FastAPI shell + SQLite registry |
-| `cuga-apps-cos-frontend` | 5174 | React UI (built + served by nginx) |
+| `cuga-apps-cos-adapter` | 8000 | Wraps cuga.sdk — the swappable planner |
+| `cuga-apps-cos-toolsmith` | 8001 | LangGraph ReAct acquisition agent — the durable brain |
+| `cuga-apps-cos-backend` | 8765 | Thin orchestrator + SQLite registry |
+| `cuga-apps-cos-frontend` | 5174 | Dumb React UI |
 
 ### Prereqs
 
@@ -236,27 +242,138 @@ curl -s -X POST http://localhost:8765/tools/approve \
   | jq '{success, reason, "probe_ok": .probe.ok}'
 ```
 
-### Troubleshooting
+### Troubleshooting (phase 3)
 
 | Symptom | Likely cause |
 |---|---|
-| No proposal card for OpenAPI gaps | Cuga isn't emitting `[[TOOL_GAP]]`. Phase 4 will replace the marker with structured-output enforcement. |
+| No proposal card for OpenAPI gaps | Cuga isn't emitting `[[TOOL_GAP]]`. |
 | `toolsmith_llm: false` after rebuild | RITS keys not propagated. `docker exec cuga-apps-cos-backend env \| grep RITS` |
-| OpenAPI install fails with `probe failed: network error` | Public API down or container has no internet. Try a different demo. |
-| OpenAPI install fails with `judge: ...` | LLM judge thought the response looked fake. Often false positive — disable by unsetting `TOOLSMITH_LLM_PROVIDER`. |
+| OpenAPI install fails with `probe failed: network error` | Public API down or container has no internet. |
+| OpenAPI install fails with `judge: ...` | LLM judge thought the response looked fake. Disable judge by unsetting `TOOLSMITH_LLM_PROVIDER`. |
 
-## Roadmap (phases 4+)
+## Phase 3.5 test plan — the new architecture
+
+### What changed since phase 3
+
+- **The consent modal is gone.** The dumb UI doesn't gate Toolsmith — Toolsmith decides what to build and just builds it. The chat shows a green "Toolsmith built X" notice underneath the planner's reply.
+- **Toolsmith runs as its own service** (`cuga-apps-cos-toolsmith` on port 8001). The backend talks to it via HTTP, mirroring the cuga adapter pattern.
+- **Tool artifacts are persistent.** Every tool Toolsmith builds gets written to `data/tools/<id>/`. Backend restart re-mounts everything.
+- **Coder is swappable.** `TOOLSMITH_CODER=gpt_oss` (default, free if you have RITS) or `TOOLSMITH_CODER=claude` (better code, costs Anthropic credits).
+
+### Setup
+
+```bash
+cd cuga-apps/chief_of_staff
+
+# Toolsmith orchestration LLM (drives the ReAct loop)
+export TOOLSMITH_LLM_PROVIDER=rits
+export TOOLSMITH_LLM_MODEL=gpt-oss-120b
+
+# Coder selection — the A/B switch
+export TOOLSMITH_CODER=gpt_oss        # or "claude" — both work, Claude is better at code
+
+# Required keys (whichever provider you use)
+# RITS_API_KEY, ANTHROPIC_API_KEY in apps/.env
+
+docker compose down
+docker compose build --no-cache       # mandatory — toolsmith image is new
+docker compose up -d
+sleep 30
+docker compose ps                     # all 4 Up
+
+# Toolsmith service health
+curl -s http://localhost:8001/health | jq
+# {"status":"ok","coder":"gpt_oss","orchestration_llm":true,"artifact_count":0}
+
+# Backend should see toolsmith reachable
+curl -s http://localhost:8765/health | jq
+```
+
+### Test 1 — Autonomous acquisition (the headline)
+
+Open http://localhost:5174 in incognito.
+
+**Type:** *"Tell me a random joke."*
+
+✅ Pass criteria:
+- Backend posts the gap to `http://chief-of-staff-toolsmith:8001/acquire`.
+- Toolsmith ReAct loop runs: searches catalog (no match) → searches OpenAPI index (matches Joke API) → generates code via Coder → probes the URL → registers as a `data/tools/openapi__get_random_joke/` artifact.
+- Chat shows a **green "Toolsmith built a tool" notice** with the artifact id.
+- Tools panel shows `get_random_joke` (kind: `generated`).
+- **Re-ask** the question → real joke.
+
+### Test 2 — Coder A/B comparison
+
+```bash
+# Try gpt-oss
+docker compose exec chief-of-staff-toolsmith env | grep TOOLSMITH_CODER
+# → gpt_oss
+
+# Switch to Claude (re-up only the toolsmith)
+TOOLSMITH_CODER=claude docker compose up -d chief-of-staff-toolsmith
+docker compose exec chief-of-staff-toolsmith env | grep TOOLSMITH_CODER
+# → claude
+
+# Trigger the same gap again ("Country information for Japan").
+# Inspect both artifacts' tool.py — Claude's typically uses cleaner
+# error handling and pagination logic. Both should pass the probe.
+ls cuga-apps/chief_of_staff/data/tools/
+cat cuga-apps/chief_of_staff/data/tools/openapi__get_country_by_name/tool.py
+```
+
+### Test 3 — Persistence (reusability)
+
+Build a tool, then restart the backend:
+
+```bash
+docker compose restart chief-of-staff-backend
+sleep 15
+curl -s http://localhost:8000/health | jq '.tool_count, .extra_tool_count'
+# extra_tool_count > 0 — the tool survived the restart and was re-mounted.
+```
+
+### Test 4 — Removing tools
+
+```bash
+# List artifacts
+curl -s http://localhost:8765/toolsmith/artifacts | jq '.[].id'
+
+# Remove one
+curl -s -X DELETE http://localhost:8765/toolsmith/artifacts/openapi__get_random_joke
+
+# Verify it's gone from the agent
+curl -s http://localhost:8000/health | jq '.extra_tool_count'
+```
+
+### Test 5 — Probe still gates registration
+
+Edit `chief_of_staff/toolsmith/Dockerfile` to bake in a `spec_index.yaml`
+override that points at a 404 URL (or just trigger a gap with no OpenAPI
+match), and confirm Toolsmith returns `success: false` with a clear
+reason. The autoresearch keep/discard gate doesn't change.
+
+### What "phase 3.5 passing" means
+
+You've proven:
+1. The brain (Toolsmith) is process-isolated from the planner (cuga adapter).
+2. Tools persist as named artifacts and survive restarts.
+3. The Coder is swappable mid-run via env var.
+4. The probe still rejects unverified tools.
+5. The UI is dumb — it shows what Toolsmith did, doesn't drive the decision.
+
+## Roadmap (phases 3.6+)
 
 | Phase | Adds | Why |
 |---|---|---|
-| **3.5** | Credential prompt UI + OS keyring integration; auth-required APIs (Stripe, GitHub, Notion) added to spec index | Unlocks the most useful APIs — most of the world's APIs need a key |
-| **3.6** | Smithery / openapi-directory search → catalog grows automatically; LLM matcher replaces token overlap | Removes manual curation as the bottleneck |
-| **4** | Browser-task source — when no API exists at all, drive cuga's web-agent side. Per-task, not persistent. | Covers DoorDash / consumer-app class of problems |
-| **5** | Daily probe of registered tools; quarantine on failure; user notifications | Makes the toolbox self-maintaining as it grows past ~20 tools |
-| **6** | Cross-domain mining over user data the unified app aggregates ("you spend more on Uber Eats the week after a bad sleep score") | The thing siloed apps literally can't ship |
+| **3.6** | Auth UX — credential prompt modal in UI + OS keyring in vault; auth-required APIs (Stripe, GitHub, Notion) | Unlocks the authenticated-API economy |
+| **3.7** | Web search + dynamic spec discovery — Toolsmith finds OpenAPI specs it doesn't already know about | Removes the curated-index ceiling |
+| **3.8** | Code-revision loop — when probe fails, Coder is asked to revise based on the failure; up to N retries | Quality bump; closes the gap on flaky generation |
+| **4** | Browser-task source — sites with no API; Toolsmith drives cuga's web-agent side | DoorDash / consumer-app class of problems |
+| **4.5** | Tool composition — Toolsmith builds tools that compose existing tools. *"Ride summary"* = Uber API + receipt parser + categorizer. | Multi-step workflows |
+| **5** | Health checks + auto-quarantine + auto-regenerate-from-provenance | Self-maintaining toolbox |
+| **6** | Cross-domain mining over the unified data layer | Genuinely novel demos that siloed apps can't ship |
 
-Phase 3.5 is the next stop and probably the biggest user-visible jump,
-because it brings the whole authenticated-API economy into reach.
+Next stop is **3.6 (auth UX)** — the biggest single jump in usefulness because most APIs worth wrapping are authenticated.
 
 ## Run without Docker
 
