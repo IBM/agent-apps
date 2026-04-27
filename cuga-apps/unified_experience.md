@@ -1,8 +1,10 @@
 # Toolsmith — architecture, workflow, and how to test
 
+> **Updated through phase 4.** Five services now (browser-runner joined). For the full 70-test benchmark, see [chief_of_staff/benchmark.md](chief_of_staff/benchmark.md).
+
 ## The big picture
 
-Four services. Each owns one concern. They talk over HTTP, never via direct imports.
+Five services. Each owns one concern. They talk over HTTP, never via direct imports.
 
 ```
                             ┌──────────────────────┐
@@ -36,12 +38,13 @@ Four services. Each owns one concern. They talk over HTTP, never via direct impo
                                         └────────────┘ └──────────┘
 ```
 
-| Service | Role | Code |
-|---|---|---|
-| **Frontend** | Show chat + tools panel + acquisition notices. **Zero logic.** | `chief_of_staff/frontend/` |
-| **Backend** | Coordinator: forwards chat to cuga, forwards gaps to Toolsmith, syncs cuga with Toolsmith's effective state. | `chief_of_staff/backend/orchestrator.py` |
-| **Cuga adapter** | Wraps `cuga.sdk.CugaAgent` over HTTP. Loads MCP servers + dynamically-generated extra tools. | `chief_of_staff/adapters/cuga/server.py` |
-| **Toolsmith** | LangGraph ReAct agent. Owns the whole "build a tool" loop. | `chief_of_staff/toolsmith/` |
+| Service | Port | Role | Code |
+|---|---|---|---|
+| **Frontend** | 5174 | Show chat + tools panel + acquisition notices. **Zero logic.** | `chief_of_staff/frontend/` |
+| **Backend** | 8765 | Coordinator: forwards chat to cuga, forwards gaps to Toolsmith, syncs cuga with effective state, proxies vault calls. | `chief_of_staff/backend/orchestrator.py` |
+| **Cuga adapter** | 8000 | Wraps `cuga.sdk.CugaAgent` over HTTP. Loads MCP servers + execs generated Python tools + dispatches browser-task tools. | `chief_of_staff/adapters/cuga/server.py` |
+| **Toolsmith** | 8001 | LangGraph ReAct agent. Owns the "build a tool" loop. | `chief_of_staff/toolsmith/` |
+| **Browser runner** *(phase 4)* | 8002 | Playwright + Chromium driver. Executes browser_task DSL steps. Persistent profiles per provider. | `chief_of_staff/browser_runner/` |
 
 ## Inside Toolsmith
 

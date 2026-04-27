@@ -1,9 +1,10 @@
 # =========================================================================
 # chief_of_staff/docker-compose.yml
 #
-# Four services:
+# Five services:
 #   chief-of-staff-adapter   wraps cuga.sdk + tools, port 8000  (swappable)
 #   chief-of-staff-toolsmith LangGraph ReAct agent, port 8001   (durable)
+#   chief-of-staff-browser   Playwright runner, port 8002       (phase 4)
 #   chief-of-staff-backend   FastAPI shell + registry, port 8765
 #   chief-of-staff-frontend  built React UI, port 5174          (dumb)
 #
@@ -25,6 +26,7 @@ services:
     environment:
       MCP_SERVERS: "web,local,code"
       CUGA_IN_DOCKER: "1"
+      BROWSER_RUNNER_URL: "http://chief-of-staff-browser:8002"
     ports:
       - "8000:8000"
     networks:
@@ -55,6 +57,24 @@ services:
       - cos
     restart: unless-stopped
 
+  chief-of-staff-browser:
+    container_name: cuga-apps-cos-browser
+    build:
+      context: ..
+      dockerfile: chief_of_staff/browser_runner/Dockerfile
+    environment:
+      BROWSER_PROFILES_DIR: /data/profiles
+      # Webhook the runner posts to when a user_confirm step fires. The
+      # backend can wire this to a UI prompt; default deny if not configured.
+      CONFIRM_WEBHOOK_URL: "http://chief-of-staff-backend:8765/internal/browser_confirm"
+    ports:
+      - "8002:8002"
+    volumes:
+      - cos-browser-profiles:/data/profiles
+    networks:
+      - cos
+    restart: unless-stopped
+
   chief-of-staff-backend:
     container_name: cuga-apps-cos-backend
     build:
@@ -63,12 +83,14 @@ services:
     environment:
       CUGA_URL: "http://chief-of-staff-adapter:8000"
       TOOLSMITH_URL: "http://chief-of-staff-toolsmith:8001"
+      BROWSER_RUNNER_URL: "http://chief-of-staff-browser:8002"
       MCP_SERVERS: "web,local,code"
     ports:
       - "8765:8765"
     depends_on:
       - chief-of-staff-adapter
       - chief-of-staff-toolsmith
+      - chief-of-staff-browser
     networks:
       - cos
     restart: unless-stopped
@@ -96,3 +118,4 @@ networks:
 
 volumes:
   cos-toolsmith-tools:
+  cos-browser-profiles:

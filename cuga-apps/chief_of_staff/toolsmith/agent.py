@@ -82,8 +82,6 @@ class Toolsmith:
         self._coder = coder or coder_from_env()
         self._store = artifact_store or ArtifactStore()
         self._on_change = on_artifact_change or _noop_async
-        # llm=False means "explicitly disabled"; llm=None means "build default
-        # lazily"; anything else is an LLM instance.
         if llm is False:
             self._llm = None
         elif llm is None:
@@ -91,13 +89,13 @@ class Toolsmith:
         else:
             self._llm = llm
 
-        # Build the source plugins lazily — they read YAML files which may
-        # not exist in unusual test layouts.
         from acquisition.catalog import Catalog  # type: ignore[import-not-found]
         from acquisition.sources.openapi_source import OpenAPISource  # type: ignore[import-not-found]
+        from acquisition.sources.browser_source import BrowserSource  # type: ignore[import-not-found]
         from acquisition.vault import Vault  # type: ignore[import-not-found]
         self._catalog = Catalog()
         self._openapi_source = OpenAPISource()
+        self._browser_source = BrowserSource()
         self._vault = Vault()
 
         # Build the agent's tool belt once.
@@ -131,6 +129,99 @@ class Toolsmith:
         if ok:
             await self._on_change(None)
         return ok
+
+    async def _acquire_browser(self, proposal) -> "AcquireResult":
+        """Phase 4 — realize a curated browser task, check secret availability,
+        optionally probe via the browser-runner, and register."""
+        import os
+        from toolsmith.artifact import make_id_from
+        realized = await self._browser_source.realize(proposal)
+        prospective_id = make_id_from(realized.tool_name, source="browser")
+
+        if realized.requires_secrets:
+            missing = self._vault.missing(prospective_id, realized.requires_secrets)
+            if missing:
+                return AcquireResult(
+                    success=False, artifact_id=None,
+                    summary=(
+                        f"Browser task {proposal.name} needs credentials before "
+                        f"I can install it: " + ", ".join(missing) + "."
+                    ),
+                    transcript=[{"step": "browser_auth_block", "missing": missing}],
+                    needs_secrets={
+                        "tool_id": prospective_id,
+                        "tool_name": realized.tool_name,
+                        "api_name": proposal.name,
+                        "required": list(realized.requires_secrets),
+                        "missing": missing,
+                        "auth": {"type": "browser_session"},
+                        "help": (
+                            "Browser tasks need login credentials. They're "
+                            "stored locally in the vault and only sent to the "
+                            "browser-runner; never logged."
+                        ),
+                    },
+                )
+
+        # Probe via browser-runner. If unreachable, fall through and register
+        # without probing — the user can wire the runner later. Logged but
+        # non-fatal so the deterministic-mode tests still work.
+        runner_url = os.environ.get(
+            "BROWSER_RUNNER_URL", "http://chief-of-staff-browser:8002"
+        ).rstrip("/")
+        task = self._browser_source.by_id(proposal.spec["task_id"])
+        steps = task.steps if task else []
+        secrets_for_probe = self._vault.all_secrets_for(prospective_id) if realized.requires_secrets else {}
+
+        probe_result: dict = {"ok": True, "reason": "probe skipped (runner unreachable)"}
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                r = await client.post(f"{runner_url}/probe", json={
+                    "steps": steps,
+                    "sample_input": realized.sample_input,
+                    "secrets": secrets_for_probe,
+                })
+                r.raise_for_status()
+                probe_result = r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Browser-runner probe failed/skipped: %s", exc)
+
+        if not probe_result.get("ok"):
+            return AcquireResult(
+                success=False, artifact_id=None,
+                summary=f"Browser probe failed: {probe_result.get('reason', 'unknown')}",
+                transcript=[{"step": "browser_probe", "result": probe_result}],
+            )
+
+        from toolsmith.artifact import ToolArtifact, ToolManifest
+        artifact = ToolArtifact(
+            manifest=ToolManifest(
+                id=prospective_id,
+                name=realized.tool_name,
+                description=realized.description or "",
+                parameters_schema=realized.invoke_params,
+                requires_secrets=list(realized.requires_secrets),
+                provenance={
+                    "source": "browser", "task_id": proposal.spec.get("task_id"),
+                    "created_at": now_iso(),
+                },
+                kind="browser_task",
+                steps=steps,
+            ),
+            code="",  # browser tasks have no Python body
+            last_probe={**probe_result, "at": now_iso()},
+        )
+        self._store.save(artifact)
+        await self._on_change(artifact)
+        return AcquireResult(
+            success=True, artifact_id=artifact.manifest.id,
+            summary=f"Mounted browser task {proposal.name}.",
+            transcript=[
+                {"step": "browser_probe", "result": probe_result},
+                {"step": "register", "artifact_id": artifact.manifest.id},
+            ],
+        )
 
     async def acquire(self, gap: dict) -> AcquireResult:
         """Take a gap, do the loop, return the outcome.
@@ -183,11 +274,17 @@ class Toolsmith:
 
         cat_proposals = self._catalog.match(gap, top_k=1)
         op_proposals = await self._openapi_source.propose(gap, top_k=1)
+        br_proposals = await self._browser_source.propose(gap, top_k=1)
 
         cat_score = cat_proposals[0].score if cat_proposals else 0.0
         op_score = op_proposals[0].score if op_proposals else 0.0
+        br_score = br_proposals[0].score if br_proposals else 0.0
 
-        prefer_catalog = cat_score >= op_score and cat_score >= 0.2
+        # API sources outrank browser when scores tie (cheaper, more reliable).
+        # Browser only wins when no API source is plausible.
+        prefer_catalog = cat_score >= op_score and cat_score >= br_score and cat_score >= 0.2
+        prefer_openapi = op_score >= br_score and op_score >= 0.2 and not prefer_catalog
+        prefer_browser = br_score >= 0.2 and not prefer_catalog and not prefer_openapi
 
         # Catalog first.
         if prefer_catalog:
@@ -210,11 +307,15 @@ class Toolsmith:
                 transcript=[{"step": "catalog_match", "entry_id": entry.id}],
             )
 
+        # Browser fallback (phase 4) — only when API sources don't fit.
+        if prefer_browser and br_proposals:
+            return await self._acquire_browser(br_proposals[0])
+
         # OpenAPI fallback.
         if not op_proposals:
             return AcquireResult(
                 success=False, artifact_id=None,
-                summary="No catalog or OpenAPI match for this gap.",
+                summary="No catalog, OpenAPI, or browser-task match for this gap.",
                 transcript=[],
             )
         proposal = op_proposals[0]
@@ -366,6 +467,11 @@ class Toolsmith:
 
 async def _noop_async(*_a, **_kw):
     return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — browser acquisition
+# ---------------------------------------------------------------------------
 
 
 def _try_build_orchestration_llm():

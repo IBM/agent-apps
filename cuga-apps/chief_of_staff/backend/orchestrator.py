@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 
 from agents.base import AgentClient
@@ -33,6 +34,7 @@ class ChatTurn:
     error: str | None
     gap: dict | None
     acquisition: dict | None   # {success, artifact_id, summary, transcript} or None
+    tools_used: list[dict] | None = None  # [{name, server}, …]
 
 
 def _build_planner() -> AgentClient:
@@ -55,6 +57,10 @@ class Orchestrator:
     ):
         self._planner = planner or _build_planner()
         self._toolsmith = toolsmith or ToolsmithClient()
+        # Tool names the user has disabled via the UI. In-memory only —
+        # acceptable since disabling is meant to be a transient, demo-time
+        # gesture ("disable web_search and try the same question again").
+        self._disabled_tools: set[str] = set()
 
     @property
     def planner(self) -> AgentClient:
@@ -64,8 +70,37 @@ class Orchestrator:
     def toolsmith(self) -> ToolsmithClient:
         return self._toolsmith
 
+    @property
+    def disabled_tools(self) -> set[str]:
+        return set(self._disabled_tools)
+
+    @property
+    def baseline_servers(self) -> set[str]:
+        """MCP server names from the env (baseline cold-start set). Tools
+        whose server isn't here got mounted by Toolsmith — surfaced in the
+        UI under 'Acquired by Toolsmith'."""
+        return set(_baseline_servers())
+
+    async def set_tool_disabled(self, name: str, disabled: bool) -> set[str]:
+        if disabled:
+            self._disabled_tools.add(name)
+        else:
+            self._disabled_tools.discard(name)
+        try:
+            await self.sync_planner_with_toolsmith()
+        except Exception:  # noqa: BLE001
+            log.exception("planner reload after disable-toggle failed")
+        return self.disabled_tools
+
     async def chat(self, message: str, thread_id: str = "default") -> ChatTurn:
-        result = await self._planner.plan_and_execute(message, thread_id=thread_id)
+        # Force a fresh per-message thread on the planner to keep cuga's
+        # internal chat history bounded — accumulating it across turns
+        # bloats the prompt past gpt-oss-120b's context, which the model
+        # reacts to by truncating output mid-generation. Conversational
+        # context is rendered client-side from the local message list, so
+        # cuga's cross-turn memory isn't load-bearing here.
+        planner_thread = f"{thread_id}-{uuid.uuid4().hex[:8]}"
+        result = await self._planner.plan_and_execute(message, thread_id=planner_thread)
         acquisition = None
 
         if result.gap is not None:
@@ -89,6 +124,7 @@ class Orchestrator:
             error=result.error,
             gap=result.gap.to_json() if result.gap is not None else None,
             acquisition=acquisition,
+            tools_used=list(result.tools_used or []),
         )
 
     async def sync_planner_with_toolsmith(self) -> dict:
@@ -105,7 +141,12 @@ class Orchestrator:
                 servers.append(s)
         extra_tools = state.get("extra_tools", [])
         secrets = state.get("secrets", {}) or {}
-        return await self._planner.reload(servers, extra_tools=extra_tools, secrets=secrets)
+        return await self._planner.reload(
+            servers,
+            extra_tools=extra_tools,
+            secrets=secrets,
+            disabled_tools=sorted(self._disabled_tools),
+        )
 
     async def remove_artifact(self, artifact_id: str) -> bool:
         ok = await self._toolsmith.remove_artifact(artifact_id)

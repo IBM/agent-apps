@@ -16,6 +16,7 @@ MCP-loaded set. These are httpx-backed StructuredTools built on the fly.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -59,8 +60,18 @@ the gap:
 {{"capability": "<short phrase>", "inputs": ["<input>", ...], "expected_output": "<what the user wanted>"}}
 
 The capability phrase should be 2-5 words (e.g. "weather lookup", "wikipedia
-search", "geocoding"). The Toolsmith agent may attempt to acquire a matching
-tool. Only emit the marker when you genuinely cannot fulfill the request.
+search", "geocoding"). The Toolsmith agent will then attempt to acquire a
+matching tool.
+
+Important rule about gap-emission:
+- If the user names a specific service, API, or website by name (e.g.
+  "chucknorris.io", "OpenWeather", "REST Countries", "Hacker News",
+  "icanhazdadjoke", "PokeAPI") and you do not have a tool whose name or
+  description directly references that service, you MUST emit the gap
+  marker rather than fall back to web_search. Web search is for open-ended
+  fact lookups, not for impersonating named APIs the user explicitly
+  asked for. Only skip the gap marker when an existing tool clearly
+  targets that named service.
 """
 
 
@@ -85,7 +96,73 @@ class _State:
     # Per-tool secrets pushed by the backend on /agent/reload. Lives in
     # adapter process memory only; not persisted, not logged.
     secrets: dict[str, dict[str, str]] = {}
+    # Tool names the orchestrator wants masked from cuga (so the user can
+    # force a gap by removing e.g. web_search from this turn's toolset).
+    disabled_tools: list[str] = []
     lock: asyncio.Lock = asyncio.Lock()
+
+
+# Per-chat-call sink for tool names that actually got invoked during the
+# turn. Set in /chat, appended to by the tool-invocation wrapper, read out
+# at the end of the turn for the response.
+_tools_used: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "cos_tools_used", default=None
+)
+
+
+def _wrap_tool_for_tracking(tool: Any) -> Any:
+    """Patch the tool's invoke entry-points so each call records the tool
+    name into the per-turn ContextVar. Re-entrant safe — if the
+    ContextVar isn't set (e.g. tool called outside /chat), we skip the
+    record cleanly.
+
+    We wrap multiple slots because cuga doesn't go through LangChain's
+    ainvoke path. Its code-exec sandbox binds tools by reading
+    `tool.coroutine` (preferred) or `tool.func`, then calls them
+    directly inside the LLM-generated Python (`await web_search(...)`).
+    Patching `_arun` alone would never fire."""
+    if getattr(tool, "_cos_tracked", False):
+        return tool
+    name = getattr(tool, "name", "unknown")
+
+    def _record() -> None:
+        sink = _tools_used.get()
+        if sink is not None:
+            sink.append(name)
+
+    coroutine = getattr(tool, "coroutine", None)
+    if callable(coroutine):
+        async def _tracked_coroutine(*args, **kwargs):
+            _record()
+            return await coroutine(*args, **kwargs)
+        tool.coroutine = _tracked_coroutine  # type: ignore[attr-defined]
+
+    func = getattr(tool, "func", None)
+    if callable(func) and func is not coroutine:
+        # `func` may be sync or async depending on the tool; preserve the
+        # original async-ness by sniffing.
+        import inspect
+        if inspect.iscoroutinefunction(func):
+            async def _tracked_func(*args, **kwargs):
+                _record()
+                return await func(*args, **kwargs)
+        else:
+            def _tracked_func(*args, **kwargs):
+                _record()
+                return func(*args, **kwargs)
+        tool.func = _tracked_func  # type: ignore[attr-defined]
+
+    # _arun is the LangChain-native path for any tools cuga happens to
+    # call through ainvoke — wrap it too so we don't miss those.
+    arun = getattr(tool, "_arun", None)
+    if callable(arun):
+        async def _tracked_arun(*args, **kwargs):
+            _record()
+            return await arun(*args, **kwargs)
+        tool._arun = _tracked_arun  # type: ignore[method-assign]
+
+    tool._cos_tracked = True  # type: ignore[attr-defined]
+    return tool
 
 
 @asynccontextmanager
@@ -262,10 +339,12 @@ def _build_extra_tool(spec: dict):
     """Build a LangChain StructuredTool from a spec.
 
     spec keys:
+      kind                 "code" | "browser_task" (default "code")
       tool_name, description, invoke_params (cuga-visible param schema)
-      requires_secrets (list[str], hidden from cuga, injected at call time)
-      code (optional Python source — preferred path), entry_point_function
-      invoke_url, invoke_method (fallback path when code is absent)
+      requires_secrets     hidden from cuga, injected at call time
+      code, entry_point_function    (kind=code: phase 3.6+ exec path)
+      invoke_url, invoke_method     (legacy fallback: param-substitution closure)
+      steps                (kind=browser_task: phase 4 DSL list)
     """
     from langchain_core.tools import StructuredTool  # type: ignore[import-not-found]
     from pydantic import create_model  # type: ignore[import-not-found]
@@ -275,6 +354,7 @@ def _build_extra_tool(spec: dict):
     params_schema = spec.get("invoke_params") or {}
     requires_secrets = list(spec.get("requires_secrets") or [])
     artifact_id = spec.get("id") or name
+    kind = spec.get("kind") or "code"
 
     # Build a pydantic args_schema EXCLUDING the secret kwargs — cuga must
     # not see them or try to ask the user for them.
@@ -291,6 +371,32 @@ def _build_extra_tool(spec: dict):
         else:
             fields[pname] = (ptype, default)
     Args = create_model(f"{name}_args", **fields) if fields else create_model(f"{name}_args")
+
+    # Phase 4 — browser_task path. Cuga calls this; we forward to the
+    # browser-runner over HTTP. No exec, no secret injection here (the
+    # browser-runner handles secret substitution into the DSL).
+    if kind == "browser_task":
+        steps = spec.get("steps") or []
+
+        async def _browser_invoke(**kwargs):
+            secrets = {}
+            for key in requires_secrets:
+                val = _secret_lookup(artifact_id, key)
+                if val is None:
+                    raise RuntimeError(f"missing secret {key!r} for browser tool {artifact_id!r}")
+                secrets[key] = val
+            url = os.environ.get("BROWSER_RUNNER_URL", "http://chief-of-staff-browser:8002")
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                r = await client.post(f"{url.rstrip('/')}/execute", json={
+                    "steps": steps, "inputs": dict(kwargs), "secrets": secrets,
+                    "allow_user_confirm": True,
+                })
+                r.raise_for_status()
+                return r.json()
+
+        return StructuredTool.from_function(
+            coroutine=_browser_invoke, name=name, description=description, args_schema=Args,
+        )
 
     # Path A: real exec of artifact code.
     code = spec.get("code")
@@ -384,11 +490,12 @@ async def _initialize_with_servers(
     servers: list[str] | None = None,
     extra_tools_spec: list[dict] | None = None,
     secrets: dict[str, dict[str, str]] | None = None,
+    disabled_tools: list[str] | None = None,
 ) -> None:
     """(Re-)build the CugaAgent for the given MCP server set + extra tools."""
     from _mcp_bridge import load_tools  # noqa: WPS433
-    from _llm import create_llm  # noqa: WPS433
     from cuga.sdk import CugaAgent  # noqa: WPS433
+    from .llm_factory import create_llm_for_adapter  # noqa: WPS433
 
     if servers is None:
         servers = [
@@ -400,29 +507,65 @@ async def _initialize_with_servers(
         extra_tools_spec = list(_State.extra_tools_spec)
     if secrets is None:
         secrets = dict(_State.secrets)
+    if disabled_tools is None:
+        disabled_tools = list(_State.disabled_tools)
+    disabled_set = {n for n in (disabled_tools or []) if n}
 
-    log.info("Loading MCP tool sets: %s + %d extra tools", servers, len(extra_tools_spec))
+    log.info(
+        "Loading MCP tool sets: %s + %d extra tools (disabled=%s)",
+        servers, len(extra_tools_spec), sorted(disabled_set) or "none",
+    )
 
     async with _State.lock:
         await _aclose_agent()
 
-        try:
-            tools = list(load_tools(servers))
-        except Exception as exc:  # noqa: BLE001
-            log.exception("MCP tool load failed")
-            raise RuntimeError(f"Failed to load MCP tools from {servers}: {exc}") from exc
+        # Load each MCP server individually so we can tag each returned
+        # tool with its origin server. The /tools endpoint surfaces this
+        # so the UI can group tools by server. load_tools() handshakes
+        # with the MCP server on each call (~few hundred ms per server,
+        # acceptable for the small fixed set we have).
+        tools: list = []
+        for server_name in servers:
+            try:
+                server_tools = list(load_tools([server_name]))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("MCP tool load failed for server=%s", server_name)
+                raise RuntimeError(
+                    f"Failed to load MCP tools from {server_name}: {exc}"
+                ) from exc
+            for t in server_tools:
+                try:
+                    setattr(t, "_cos_server", server_name)
+                except Exception:  # noqa: BLE001
+                    pass
+            tools.extend(server_tools)
 
-        # Merge phase-3 generated tools.
+        # Merge phase-3 generated tools — provenance source is the artifact
+        # spec, not an MCP server. We tag with "_cos_server=None" so the
+        # /tools endpoint can render them under a 'generated' bucket.
         for spec in extra_tools_spec:
             try:
-                tools.append(_build_extra_tool(spec))
+                t = _build_extra_tool(spec)
+                setattr(t, "_cos_server", None)
+                tools.append(t)
             except Exception:  # noqa: BLE001
                 log.exception("Failed to build extra tool: %s", spec.get("tool_name"))
+
+        # Apply user-requested disable list. We drop the tool entirely so
+        # cuga doesn't even see it in the schema — this is the mechanism
+        # behind the UI toggle that lets the user force gaps.
+        if disabled_set:
+            before = len(tools)
+            tools = [t for t in tools if getattr(t, "name", "") not in disabled_set]
+            log.info("Filtered %d disabled tools (%d → %d)", before - len(tools), before, len(tools))
+
+        # Wrap each surviving tool so per-turn invocations get recorded.
+        tools = [_wrap_tool_for_tracking(t) for t in tools]
 
         if not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = "sk-placeholder-not-used"
 
-        llm = create_llm()
+        llm = create_llm_for_adapter()
         agent = CugaAgent(model=llm, tools=tools, special_instructions=SYSTEM_INSTRUCTIONS)
         await agent.initialize()
 
@@ -440,6 +583,7 @@ async def _initialize_with_servers(
         _State.servers_loaded = servers
         _State.extra_tools_spec = list(extra_tools_spec)
         _State.secrets = dict(secrets)
+        _State.disabled_tools = sorted(disabled_set)
         log.info("Cuga adapter ready — %d total tools (%d MCP + %d generated, %d with secrets)",
                  len(tools), len(tools) - len(extra_tools_spec),
                  len(extra_tools_spec), len(secrets))
@@ -458,12 +602,16 @@ class ChatResponse(BaseModel):
     thread_id: str
     error: str | None = None
     gap: dict | None = None
+    # Per-call attribution: each entry is {name, server} where server is
+    # the MCP server the tool came from, or None for generated/extra tools.
+    tools_used: list[dict] = []
 
 
 class ReloadRequest(BaseModel):
     servers: list[str]
     extra_tools: list[dict] = []
     secrets: dict[str, dict[str, str]] = {}
+    disabled_tools: list[str] = []
 
 
 @app.get("/health")
@@ -484,6 +632,7 @@ async def list_tools() -> list[dict]:
             "name": getattr(t, "name", str(t)),
             "description": getattr(t, "description", "") or "",
             "kind": "generated" if getattr(t, "name", "") in extra_names else "mcp",
+            "server": getattr(t, "_cos_server", None),
         }
         for t in _State.tools
     ]
@@ -492,7 +641,9 @@ async def list_tools() -> list[dict]:
 @app.post("/agent/reload")
 async def reload_agent(req: ReloadRequest) -> dict:
     try:
-        await _initialize_with_servers(req.servers, req.extra_tools, req.secrets)
+        await _initialize_with_servers(
+            req.servers, req.extra_tools, req.secrets, req.disabled_tools,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {
@@ -501,6 +652,7 @@ async def reload_agent(req: ReloadRequest) -> dict:
         "tool_count": len(_State.tools),
         "extra_tool_count": len(_State.extra_tools_spec),
         "tools_with_secrets": len(_State.secrets),
+        "disabled_tools": list(_State.disabled_tools),
     }
 
 
@@ -508,17 +660,42 @@ async def reload_agent(req: ReloadRequest) -> dict:
 async def chat(req: ChatRequest) -> ChatResponse:
     if _State.agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    sink: list[str] = []
+    token = _tools_used.set(sink)
     try:
         result = await _State.agent.invoke(req.message, thread_id=req.thread_id)
     except Exception as exc:  # noqa: BLE001
         log.exception("agent.invoke failed")
-        return ChatResponse(response="", thread_id=req.thread_id, error=str(exc))
+        return ChatResponse(
+            response="", thread_id=req.thread_id, error=str(exc),
+            tools_used=_attribute_servers(list(dict.fromkeys(sink))),
+        )
+    finally:
+        _tools_used.reset(token)
 
     answer = getattr(result, "answer", str(result))
     cleaned, gap = _parse_gap(answer)
+    # De-duplicate while preserving call order (first invocation wins).
+    tools_used = _attribute_servers(list(dict.fromkeys(sink)))
     return ChatResponse(
         response=cleaned,
         thread_id=req.thread_id,
         error=getattr(result, "error", None),
         gap=gap,
+        tools_used=tools_used,
     )
+
+
+def _attribute_servers(names: list[str]) -> list[dict]:
+    """Map tool names to {name, server} pairs using the live tool list.
+    Generated/extra tools have server=None — the chat UI renders that as
+    'generated' rather than an MCP server."""
+    server_by_name: dict[str, str | None] = {
+        getattr(t, "name", ""): getattr(t, "_cos_server", None)
+        for t in _State.tools
+    }
+    out = []
+    for n in names:
+        out.append({"name": n, "server": server_by_name.get(n)})
+    return out

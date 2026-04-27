@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { AcquisitionResult, ChatResponse, sendChat } from '../api/client';
+import { AcquisitionResult, ChatResponse, sendChat, ToolCall } from '../api/client';
 import CredentialPrompt from './CredentialPrompt';
 
 type Turn = {
@@ -7,6 +7,7 @@ type Turn = {
   text: string;
   gap?: ChatResponse['gap'];
   acquisition?: AcquisitionResult | null;
+  toolsUsed?: ToolCall[];
 };
 
 interface Props {
@@ -34,6 +35,7 @@ export default function Chat({ onToolsChanged }: Props) {
           text: r.error ? `error: ${r.error}` : r.response || '(no answer)',
           gap: r.gap,
           acquisition: r.acquisition,
+          toolsUsed: r.tools_used ?? [],
         },
       ]);
       if (r.acquisition?.success) {
@@ -66,6 +68,35 @@ export default function Chat({ onToolsChanged }: Props) {
             >
               {t.text}
             </div>
+            {t.role === 'agent' && t.toolsUsed && t.toolsUsed.length > 0 && (
+              <div className="text-[11px] text-gray-500 font-mono space-x-1">
+                <span>via:</span>
+                {t.toolsUsed.map((tc, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center bg-gray-100 rounded overflow-hidden"
+                    title={tc.server ? `from ${tc.server} MCP server` : 'runtime-generated tool'}
+                  >
+                    <span className="px-1.5 py-0.5">{tc.name}</span>
+                    <span
+                      className={
+                        'px-1.5 py-0.5 text-[10px] uppercase tracking-wide ' +
+                        (tc.server
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-emerald-100 text-emerald-700')
+                      }
+                    >
+                      {tc.server ? `mcp · ${tc.server}` : 'generated'}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {t.role === 'agent' && t.toolsUsed && t.toolsUsed.length === 0 && !t.acquisition && (
+              <div className="text-[11px] text-gray-400 italic">
+                (no tools called — answered from the model directly)
+              </div>
+            )}
             {t.role === 'agent' && t.acquisition && (
               <>
                 <AcquisitionNotice acquisition={t.acquisition} />

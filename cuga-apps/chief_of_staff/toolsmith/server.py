@@ -246,7 +246,8 @@ async def effective_state() -> dict:
         if artifact is None:
             continue
         source = (artifact.manifest.provenance or {}).get("source", "openapi")
-        if source == "catalog":
+        # Catalog mounts are MCP servers loaded by the adapter directly.
+        if source == "catalog" and artifact.manifest.kind != "browser_task":
             target = artifact.manifest.name
             if target and target not in mcp_servers:
                 mcp_servers.append(target)
@@ -258,6 +259,8 @@ async def effective_state() -> dict:
             blocked.append({"artifact_id": artifact.manifest.id, "missing": missing})
             continue
 
+        # Phase 4 — both code-kind and browser_task-kind artifacts ride
+        # extra_tools. The adapter dispatches based on spec["kind"].
         spec = artifact.to_mcp_tool_spec()
         spec["id"] = artifact.manifest.id
         extra_tools.append(spec)

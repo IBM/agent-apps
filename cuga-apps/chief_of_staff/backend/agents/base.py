@@ -41,6 +41,10 @@ class AgentResult:
     answer: str
     error: Optional[str] = None
     gap: Optional[ToolGap] = None
+    # Each entry is {name, server} where server is the MCP server
+    # attribution (None for generated/extra tools). Adapter-shape; the
+    # orchestrator passes it through to the UI without interpretation.
+    tools_used: list[dict] = field(default_factory=list)
 
 
 class AgentClient(Protocol):
@@ -58,6 +62,7 @@ class AgentClient(Protocol):
         servers: list[str],
         extra_tools: list[dict] | None = None,
         secrets: dict[str, dict[str, str]] | None = None,
+        disabled_tools: list[str] | None = None,
     ) -> dict:
         """Tell the agent to rebuild itself with a new tool set + per-tool
         secrets. Used by the orchestrator after an acquisition or vault change.
@@ -65,6 +70,8 @@ class AgentClient(Protocol):
         extra_tools = generated tool specs (phase 3.5+).
         secrets   = {artifact_id: {key: value}} for tools whose code requires
                     auth values at call time (phase 3.6).
+        disabled_tools = tool names to mask from the agent so the user can
+                    force gap-emission by removing e.g. web_search.
         """
         ...
 

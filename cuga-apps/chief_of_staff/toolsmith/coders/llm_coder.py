@@ -121,15 +121,28 @@ def _build_default_llm():
 
 
 def _format_spec_prompt(spec: CodeGenSpec) -> str:
+    # Some upstream sources hand us flattened schemas where the value is a
+    # bare type string (e.g. {"symbol": "string"}) instead of the JSON-Schema
+    # shape ({"symbol": {"type": "string", ...}}). Coerce so .get() never
+    # blows up — without this the ReAct path crashed mid-codegen and only
+    # the deterministic fallback succeeded.
+    def _normalize(info: object) -> dict:
+        if isinstance(info, dict):
+            return info
+        if isinstance(info, str):
+            return {"type": info, "description": ""}
+        return {"type": "string", "description": ""}
+
     parts = [
         f"Function name: {spec.name}",
         f"Description: {spec.description}",
         "Parameters:",
         *(
-            f"  - {p}: {info.get('type', 'string')}"
-            f" {'(required)' if info.get('required') else '(optional)'}"
-            f" — {info.get('description', '')}"
+            f"  - {p}: {n.get('type', 'string')}"
+            f" {'(required)' if n.get('required') else '(optional)'}"
+            f" — {n.get('description', '')}"
             for p, info in (spec.parameters_schema or {}).items()
+            for n in (_normalize(info),)
         ),
     ]
     if spec.api_base_url:

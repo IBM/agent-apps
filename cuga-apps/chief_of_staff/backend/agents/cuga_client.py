@@ -31,6 +31,7 @@ class CugaClient(AgentClient):
                 answer=data.get("response", ""),
                 error=data.get("error"),
                 gap=gap,
+                tools_used=list(data.get("tools_used") or []),
             )
         except (httpx.HTTPError, ValueError):
             return AgentResult(
@@ -42,6 +43,7 @@ class CugaClient(AgentClient):
         servers: list[str],
         extra_tools: list[dict] | None = None,
         secrets: dict[str, dict[str, str]] | None = None,
+        disabled_tools: list[str] | None = None,
     ) -> dict:
         # 5-minute timeout — rebuilding the agent + handshaking with all MCP
         # servers takes ~30s in practice but can spike on cold start.
@@ -51,6 +53,7 @@ class CugaClient(AgentClient):
                 "servers": servers,
                 "extra_tools": list(extra_tools or []),
                 "secrets": dict(secrets or {}),
+                "disabled_tools": list(disabled_tools or []),
             },
             timeout=300.0,
         )

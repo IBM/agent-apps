@@ -21,6 +21,14 @@ it hits a gap. Self-contained: nothing outside this directory is modified.
 - Probe harness (structural + optional LLM judge) — the autoresearch keep/discard gate
 - Live tool mounting via the cuga adapter's `extra_tools`
 
+**Phase 4 — browser-driven tools**
+- New service [browser_runner/](browser_runner/) on port 8002 — Playwright + Chromium running in its own container, with persistent Chrome user-data profiles per provider. Falls back to a `MockExecutor` when Playwright isn't installed (tests).
+- **Browser task DSL** ([browser_runner/dsl.py](browser_runner/dsl.py)) — declarative YAML: `go_to`, `click_text`, `click_selector`, `fill_field`, `wait_for_text`, `wait_for_selector`, `extract_text`, `screenshot`, `ensure_logged_in`, `user_confirm`, `sleep`. Variables interpolate from inputs (`${var}`) or secrets.
+- **BrowserSource** plugin ([backend/acquisition/sources/browser_source.py](backend/acquisition/sources/browser_source.py)) — curated `browser_tasks.yaml` with seeded templates: HN scraping, Wikipedia website search, GitHub repo About scraping, plus auth-required templates for school portals, utility billing, and confirmable form submission.
+- **Adapter dispatch**: artifacts now carry `kind` ("code" or "browser_task"). When `kind=browser_task`, the cuga adapter forwards the call to `browser-runner /execute` with the steps + interpolated inputs + injected secrets.
+- **`user_confirm` step** webhooks the backend so the UI can pause for human approval (phase 4.1 will surface the UI prompt; v1 default-denies without a confirm callback).
+- Toolsmith routes gaps to BrowserSource as a fallback when API sources don't match.
+
 **Phase 3.7 — OAuth2 + spec discovery**
 - New auth scheme `oauth2_token` ([sources/openapi_source.py](backend/acquisition/sources/openapi_source.py)) — bearer token + refresh token + token URL + client creds, all stored in the vault.
 - **Auto-refresh on 401** in the cuga adapter — when a tool call returns 401, the adapter posts to the OAuth2 `token_url`, swaps in the new access token, retries once, and persists the refreshed token back to the vault.
@@ -52,12 +60,13 @@ Not yet (phases 4+): web search for arbitrary specs, browser source for no-API s
 
 ## Run with Docker
 
-The cleanest way to take a look. **Four** containers come up now (Toolsmith joined the party):
+The cleanest way to take a look. **Five** containers come up now (browser-runner joined in phase 4):
 
 | Container | Port | What it does |
 |---|---|---|
 | `cuga-apps-cos-adapter` | 8000 | Wraps cuga.sdk — the swappable planner |
 | `cuga-apps-cos-toolsmith` | 8001 | LangGraph ReAct acquisition agent — the durable brain |
+| `cuga-apps-cos-browser` | 8002 | Playwright runner for browser-driven tools (phase 4) |
 | `cuga-apps-cos-backend` | 8765 | Thin orchestrator + SQLite registry |
 | `cuga-apps-cos-frontend` | 5174 | Dumb React UI |
 
@@ -588,6 +597,40 @@ You've proven:
 2. **Spec discovery.** Toolsmith can find APIs not in the curated index.
 3. **Self-correcting codegen.** Bad code gets rewritten with feedback; only working tools register.
 
+## Phase 4 test plan — browser-driven tools
+
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+sleep 60                                  # browser-runner pulls Playwright base image (~500MB first time)
+curl -s http://localhost:8002/health | jq
+# {"status":"ok","executor":"playwright","profiles_dir":"/data/profiles"}
+```
+
+### The headline demo
+
+UI: *"What are the top 5 stories on Hacker News right now?"*
+
+✅ Pass:
+- Catalog miss; OpenAPI miss; **BrowserSource matches `hn_top_stories`**
+- Toolsmith probes the runner; runner opens news.ycombinator.com; extracts titles; passes
+- Artifact persisted at `data/tools/browser__hn_top_stories/` with `kind: browser_task` and `steps.yaml`
+- Tools panel shows `hn_top_stories` (kind: browser)
+- Re-ask returns the actual top stories
+
+### Auth-required browser flow
+
+UI: *"Check my kid's grades on the school portal."*
+
+✅ Pass:
+- Credential prompt asks for `school_portal_username` + `school_portal_password`
+- Note: the bundled template uses fictional URLs — adapt for your real portal by editing the YAML before the demo. Auth + dispatch flow works regardless.
+
+### Extensive coverage
+
+The full **70-test benchmark suite** is at [benchmark.md](benchmark.md). It covers all phases (skeleton → browser) with concrete prompts, expected outcomes, and what each test proves architecturally.
+
 ## What's still NOT done — the honest "are we done?" answer
 
 Even with 3.7 + 3.8, these are real, useful features that don't exist yet:
@@ -605,18 +648,19 @@ Even with 3.7 + 3.8, these are real, useful features that don't exist yet:
 
 So no, **we're not "truly done."** What we are after 3.8 is **architecturally complete for documented APIs.** Every phase from 4 onward is about *which kinds of capabilities* the system reaches, or about making it production-grade. The bones are right.
 
-## Roadmap (phases 4+)
+## Roadmap (phases 4.1+)
 
-Architecture is feature-complete for documented APIs (3.0 → 3.8). What's left:
+Phase 4 is shipped. What's left to round out the system:
 
 | Phase | Adds | Why |
 |---|---|---|
-| **4** | Browser-task source — Toolsmith drives cuga's web-agent side for sites with no API | DoorDash / consumer apps without APIs |
-| **4.5** | Tool composition — single tool internally chains multiple atomic tools | Reusable workflows like "daily Stripe digest" |
-| **5** | Health checks + auto-quarantine + auto-regenerate-from-provenance | Self-maintaining toolbox at month 3+ |
-| **6** | Cross-domain mining over the unified data layer | Genuinely novel demos that siloed apps can't ship |
+| **4.1** | BrowserScriptCoder — LLM generates browser DSL scripts on the fly (vs. curated templates only) | Removes the manual template ceiling for browser tools |
+| **4.2** | UI surface for `user_confirm` browser steps — when the runner pauses, the chat shows an "Approve / Deny" prompt | Closes the human-in-the-loop UX gap |
+| **4.5** | Tool composition — single tool internally chains atomic tools (e.g. `weekly_finance_digest` = stripe + plaid + email) | Power-user workflows |
+| **5** | Health checks + auto-quarantine + auto-regenerate from provenance | Self-maintaining toolbox at month 3+ |
+| **6** | Cross-domain mining over the unified data layer | Genuinely novel demos siloed apps can't ship |
 
-After 3.7 + 3.8 the architecture is done. Phase 4 onward is about *coverage* and *operations*, not new architectural primitives.
+See [benchmark.md](benchmark.md) for the comprehensive 70-test suite.
 
 ## Run without Docker
 

@@ -16,12 +16,18 @@ export interface AcquisitionResult {
   needs_secrets: NeedsSecrets | null;
 }
 
+export interface ToolCall {
+  name: string;
+  server: string | null;
+}
+
 export interface ChatResponse {
   response: string;
   thread_id: string;
   error: string | null;
   gap: { capability?: string; expected_output?: string; inputs?: string[] } | null;
   acquisition: AcquisitionResult | null;
+  tools_used: ToolCall[];
 }
 
 export interface ToolRecord {
@@ -30,6 +36,8 @@ export interface ToolRecord {
   source: string;
   description: string;
   health: string;
+  disabled?: boolean;
+  acquired?: boolean;
 }
 
 export interface ToolsmithHealth {
@@ -128,5 +136,15 @@ export async function deleteSecret(toolId: string, secretKey?: string): Promise<
 export async function listVaultKeys(toolId: string): Promise<{ tool_id: string; keys: string[]; backend: string }> {
   const r = await fetch(`${BASE}/vault/keys/${encodeURIComponent(toolId)}`);
   if (!r.ok) throw new Error(`vault keys failed: ${r.status}`);
+  return r.json();
+}
+
+export async function toggleTool(name: string, disabled: boolean): Promise<{ name: string; disabled: boolean; all_disabled: string[] }> {
+  const r = await fetch(`${BASE}/tools/${encodeURIComponent(name)}/toggle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled }),
+  });
+  if (!r.ok) throw new Error(`toggle failed: ${r.status}`);
   return r.json();
 }

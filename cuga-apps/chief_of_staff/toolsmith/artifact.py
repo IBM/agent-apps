@@ -46,9 +46,15 @@ class ToolManifest:
     requires_secrets: list[str] = field(default_factory=list)
     provenance: dict = field(default_factory=dict)
     version: int = 1
-    # Phase 3.7 — auth metadata from the OpenAPI source. Used by the cuga
-    # adapter for OAuth2 refresh-on-401. May be None for non-auth tools.
     auth: dict | None = None
+    # Phase 4 — kind selects the runtime path:
+    #   "code"          → adapter exec()s tool.py (default; phase 3.6+)
+    #   "browser_task"  → adapter dispatches to browser-runner with steps
+    #   "catalog_mount" → adapter loads an MCP server (legacy phase 2)
+    kind: str = "code"
+    # For browser_task: list of DSL step dicts. Persisted as YAML next to
+    # the manifest. None for non-browser tools.
+    steps: list[dict] | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -65,6 +71,8 @@ class ToolManifest:
             provenance=dict(d.get("provenance") or {}),
             version=int(d.get("version", 1)),
             auth=d.get("auth"),
+            kind=d.get("kind", "code"),
+            steps=d.get("steps"),
         )
 
 
@@ -98,8 +106,9 @@ class ToolArtifact:
             "code": self.code,
             "entry_point_function": self.manifest.name,
             "requires_secrets": list(self.manifest.requires_secrets),
-            # Phase 3.7 — adapter uses this for OAuth2 refresh-on-401.
             "auth": self.manifest.auth,
+            "kind": self.manifest.kind,
+            "steps": self.manifest.steps,
         }
 
 
@@ -133,7 +142,19 @@ class ArtifactStore:
         dir_ = self._root / artifact.manifest.id
         dir_.mkdir(parents=True, exist_ok=True)
         (dir_ / "manifest.yaml").write_text(yaml.safe_dump(artifact.manifest.to_dict(), sort_keys=False))
-        (dir_ / "tool.py").write_text(artifact.code)
+        # Phase 4 — browser tasks store DSL steps in steps.yaml; tool.py
+        # is just an informational comment. Code-kind artifacts keep using
+        # tool.py as the executable.
+        if artifact.manifest.kind == "browser_task":
+            (dir_ / "steps.yaml").write_text(
+                yaml.safe_dump(artifact.manifest.steps or [], sort_keys=False)
+            )
+            (dir_ / "tool.py").write_text(
+                f"# Browser task — see steps.yaml for the DSL. Executed by browser-runner.\n"
+                f"# Tool: {artifact.manifest.name}\n"
+            )
+        else:
+            (dir_ / "tool.py").write_text(artifact.code)
         if artifact.last_probe is not None:
             (dir_ / "probe.json").write_text(json.dumps(artifact.last_probe, indent=2))
         return dir_

@@ -32,20 +32,45 @@ async def sync_from_adapter(registry: ToolRegistry, adapter_url: str) -> int:
         log.warning("Adapter unreachable at %s — skipping discovery (%s)", url, exc)
         return 0
 
-    recs = [
-        ToolRecord(
-            id=f"mcp_server:{t['name']}",
+    # Group adapter tools by their declared MCP server so the registry has
+    # one source per server (e.g. "mcp:web", "mcp:finance") plus a single
+    # "generated" bucket for runtime-built tools. The UI groups on this,
+    # so before this change every tool collapsed under one "mcp_server"
+    # group with the server origin invisible.
+    by_source: dict[str, list[ToolRecord]] = {}
+    for t in data:
+        if "name" not in t:
+            continue
+        kind = t.get("kind") or "mcp"
+        server = t.get("server")
+        source = "generated" if kind == "generated" or not server else f"mcp:{server}"
+        rec = ToolRecord(
+            id=f"{source}:{t['name']}",
             name=t["name"],
-            source="mcp_server",
+            source=source,
             description=t.get("description", ""),
-            spec={"adapter_url": adapter_url},
+            spec={"adapter_url": adapter_url, "server": server, "kind": kind},
         )
-        for t in data
-        if "name" in t
-    ]
-    registry.replace_source("mcp_server", recs)
-    log.info("Synced %d MCP tools from adapter", len(recs))
-    return len(recs)
+        by_source.setdefault(source, []).append(rec)
+
+    # Clear the legacy single-bucket rows from before this change, plus any
+    # source we used to have but no longer see (server dropped from
+    # MCP_SERVERS, etc.) so the panel doesn't show phantom groups.
+    registry.replace_source("mcp_server", [])
+    seen = set(by_source.keys())
+    stale = {
+        r.source for r in registry.all()
+        if (r.source.startswith("mcp:") or r.source == "generated") and r.source not in seen
+    }
+    for s in stale:
+        registry.replace_source(s, [])
+
+    total = 0
+    for source, recs in by_source.items():
+        registry.replace_source(source, recs)
+        total += len(recs)
+    log.info("Synced %d adapter tools across %d sources", total, len(by_source))
+    return total
 
 
 async def sync_with_retry(

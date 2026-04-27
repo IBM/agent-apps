@@ -72,6 +72,7 @@ class ChatResponse(BaseModel):
     error: str | None = None
     gap: dict | None = None
     acquisition: dict | None = None
+    tools_used: list[dict] = []   # [{name, server}, …]
 
 
 @app.get("/health")
@@ -91,16 +92,29 @@ async def health() -> dict:
 async def tools() -> list[dict]:
     if not _registry:
         return []
-    return [
-        {
+    disabled = _orchestrator.disabled_tools if _orchestrator else set()
+    baseline = _orchestrator.baseline_servers if _orchestrator else set()
+    out = []
+    for r in _registry.all():
+        # acquired = mounted by Toolsmith at runtime, not present in the
+        # cold-start MCP_SERVERS env. Generated tools are always acquired.
+        if r.source == "generated":
+            acquired = True
+        elif r.source.startswith("mcp:"):
+            server = r.source[len("mcp:"):]
+            acquired = server not in baseline
+        else:
+            acquired = False
+        out.append({
             "id": r.id,
             "name": r.name,
             "source": r.source,
             "description": r.description,
             "health": r.health,
-        }
-        for r in _registry.all()
-    ]
+            "disabled": r.name in disabled,
+            "acquired": acquired,
+        })
+    return out
 
 
 @app.post("/tools/refresh")
@@ -110,6 +124,30 @@ async def refresh_tools() -> dict:
     adapter_url = os.environ.get("CUGA_URL", "http://localhost:8000")
     n = await sync_from_adapter(_registry, adapter_url)
     return {"synced": n}
+
+
+class ToggleRequest(BaseModel):
+    disabled: bool
+
+
+@app.post("/tools/{name}/toggle")
+async def toggle_tool(name: str, req: ToggleRequest) -> dict:
+    """Mask or unmask a tool from the planner. Triggers a planner reload.
+
+    The toggle is a temporary, in-memory-only signal — useful for forcing
+    a gap (e.g. disable web_search and re-ask "tell me a Chuck Norris
+    joke from chucknorris.io" to push cuga into Toolsmith)."""
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    disabled = await _orchestrator.set_tool_disabled(name, req.disabled)
+    if _registry:
+        adapter_url = os.environ.get("CUGA_URL", "http://localhost:8000")
+        await sync_from_adapter(_registry, adapter_url)
+    return {
+        "name": name,
+        "disabled": req.disabled,
+        "all_disabled": sorted(disabled),
+    }
 
 
 @app.get("/toolsmith/artifacts")
@@ -212,4 +250,5 @@ async def chat(req: ChatRequest) -> ChatResponse:
         error=turn.error,
         gap=turn.gap,
         acquisition=turn.acquisition,
+        tools_used=list(turn.tools_used or []),
     )
