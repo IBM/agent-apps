@@ -38,14 +38,17 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 @dataclass
 class ToolManifest:
-    id: str                                # filesystem-safe, e.g. "openapi_countries_get_country_by_name"
-    name: str                              # the function name (Python identifier)
+    id: str
+    name: str
     description: str
-    parameters_schema: dict                # JSON-Schema-ish: {param: {type, required, description, default}}
+    parameters_schema: dict
     entry_point: str = "tool.py"
     requires_secrets: list[str] = field(default_factory=list)
-    provenance: dict = field(default_factory=dict)  # {coder, source, gap, timestamp, ...}
+    provenance: dict = field(default_factory=dict)
     version: int = 1
+    # Phase 3.7 — auth metadata from the OpenAPI source. Used by the cuga
+    # adapter for OAuth2 refresh-on-401. May be None for non-auth tools.
+    auth: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -61,6 +64,7 @@ class ToolManifest:
             requires_secrets=list(d.get("requires_secrets") or []),
             provenance=dict(d.get("provenance") or {}),
             version=int(d.get("version", 1)),
+            auth=d.get("auth"),
         )
 
 
@@ -85,12 +89,7 @@ class ToolArtifact:
         }
 
     def to_mcp_tool_spec(self) -> dict:
-        """The shape the cuga adapter's _build_extra_tool() consumes.
-
-        Phase-3 adapter currently expects an HTTP-wrapper-shaped dict. With
-        full code-gen in 3.5, we ship the *code* itself plus a manifest;
-        the adapter dynamically execs the function and registers it.
-        """
+        """The shape the cuga adapter's _build_extra_tool() consumes."""
         return {
             "id": self.manifest.id,
             "tool_name": self.manifest.name,
@@ -99,6 +98,8 @@ class ToolArtifact:
             "code": self.code,
             "entry_point_function": self.manifest.name,
             "requires_secrets": list(self.manifest.requires_secrets),
+            # Phase 3.7 — adapter uses this for OAuth2 refresh-on-401.
+            "auth": self.manifest.auth,
         }
 
 

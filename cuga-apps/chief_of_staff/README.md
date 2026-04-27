@@ -21,6 +21,17 @@ it hits a gap. Self-contained: nothing outside this directory is modified.
 - Probe harness (structural + optional LLM judge) — the autoresearch keep/discard gate
 - Live tool mounting via the cuga adapter's `extra_tools`
 
+**Phase 3.7 — OAuth2 + spec discovery**
+- New auth scheme `oauth2_token` ([sources/openapi_source.py](backend/acquisition/sources/openapi_source.py)) — bearer token + refresh token + token URL + client creds, all stored in the vault.
+- **Auto-refresh on 401** in the cuga adapter — when a tool call returns 401, the adapter posts to the OAuth2 `token_url`, swaps in the new access token, retries once, and persists the refreshed token back to the vault.
+- **Bring-your-own-token UX** — user pastes access + refresh tokens (typically obtained via the Google OAuth playground or equivalent). No redirect flow yet; that's deferred. Existing `CredentialPrompt` already handles multi-field input.
+- Gmail Send + Google Calendar list-events seeded in [spec_index.yaml](backend/acquisition/sources/spec_index.yaml) as reference implementations.
+- **`search_apis_guru_directory`** internal tool ([toolsmith/tools/build.py](toolsmith/tools/build.py)) — Toolsmith's ReAct loop can now hit the public APIs.guru index (~2,500 OpenAPI specs) when the curated index misses.
+
+**Phase 3.8 — code-revise loop**
+- New `probe_executed_code` ([backend/acquisition/probe.py](backend/acquisition/probe.py)) — exec()s the Coder's output, calls the entry point with sample input + secrets, validates the response. The structural probe still runs *first* against the upstream URL (cheap); this exec-probe runs *after* code generation.
+- **Failed exec-probe → `Coder.revise_tool(prior, feedback)`** with the failure reason, status code, and response excerpt. Up to 3 revisions before giving up. Revision history is persisted in artifact provenance for diagnostics.
+
 **Phase 3.6 — real code exec + auth UX + vault**
 - **Adapter exec()s artifact code** with an import allowlist (httpx, json, re, datetime, urllib, asyncio, math, base64, hashlib, hmac, uuid, time, plus pydantic/typing). Disallowed imports register as error stubs that raise on call instead of crashing the adapter. ([adapters/cuga/server.py](adapters/cuga/server.py))
 - **Auth-aware Coder** — the LLM/Claude Coder prompt knows the auth scheme and emits the secret as the last kwarg of the function signature, hidden from cuga's args_schema.
@@ -489,22 +500,123 @@ You've proven:
 4. **Vault separation.** Secrets travel from vault → adapter → tool, never to the UI or logs.
 5. **Persistence still works.** Auth-aware artifacts survive restart; their secrets stay in the vault.
 
-You can now wire any documented authenticated REST API into Toolsmith
-just by adding it to spec_index.yaml — Stripe, Linear, Notion, Slack
-webhooks, whatever fits the three supported auth schemes.
+## Phase 3.7 / 3.8 test plan — OAuth2 + revise loop + spec search
 
-## Roadmap (phases 3.7+)
+```bash
+cd cuga-apps/chief_of_staff
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+sleep 30
+```
+
+### Test 1 — Gmail (OAuth2 reach)
+
+UI: *"Send an email through Gmail."*
+
+✅ Pass criteria:
+- Toolsmith matches `openapi:gmail_send`. The auth scheme is `oauth2_token`,
+  so the credential prompt asks for **four fields**: `gmail_access_token`,
+  `gmail_refresh_token`, `google_oauth_client_id`, `google_oauth_client_secret`.
+- Help text walks you through obtaining them via Google OAuth playground.
+- After you paste all four, re-asking the question runs the build:
+  - Toolsmith probes the URL (auth-aware probe injects access token).
+  - Coder generates code that takes all four secrets as kwargs and uses
+    them in the `Authorization` header.
+  - Tool registers as `openapi__gmail_send_message`.
+- Asking the agent to send a real test email actually sends one.
+
+### Test 2 — OAuth2 token refresh on 401
+
+```bash
+# Expire the access token by replacing it with a known-bad value.
+curl -s -X POST http://localhost:8765/vault/secret \
+  -H 'Content-Type: application/json' \
+  -d '{"tool_id":"openapi__gmail_send_message","secret_key":"gmail_access_token","value":"obviously_expired"}'
+
+# Trigger a tool call. The first call to Gmail returns 401. The adapter
+# should auto-refresh using the refresh_token + client creds, retry, succeed.
+docker logs cuga-apps-cos-adapter -f | grep -i "OAuth2"
+# → "OAuth2 refresh succeeded for 'openapi__gmail_send_message'"
+```
+
+### Test 3 — Code-revise loop (3.8)
+
+You can force this by editing the spec_index entry for an existing API to
+point at a *slightly wrong* path (e.g. `/random_jokes` instead of
+`/random_joke`). The structural URL probe will still pass because the
+domain is reachable, but the exec-probe will fail (404 from the actual
+function). Toolsmith asks the Coder to revise based on the failure.
+
+Look for these in the adapter logs / artifact provenance:
+```bash
+docker exec cuga-apps-cos-toolsmith \
+  cat /app/chief_of_staff/data/tools/<artifact>/manifest.yaml | grep revisions
+# revisions:
+#   - {attempt: 0, ok: false, reason: 'upstream http 404'}
+#   - {attempt: 1, ok: true, reason: 'executed code passed'}
+```
+
+### Test 4 — APIs.guru spec discovery (3.7e)
+
+UI: *"Convert 100 USD to JPY."* (no currency conversion in our curated index)
+
+With Toolsmith's orchestration LLM enabled, the ReAct loop:
+1. Calls `search_catalog` → no match.
+2. Calls `search_openapi_index` → no match.
+3. **Calls `search_apis_guru_directory`** → finds e.g. `frankfurter.app` or
+   `exchangerate.host`.
+4. Manually fetches the spec, picks an endpoint, generates code, probes,
+   registers.
+
+```bash
+docker logs cuga-apps-cos-toolsmith -f | grep -i "apis_guru"
+```
+
+Note: this only fires on the LLM path. Without `TOOLSMITH_LLM_PROVIDER`
+configured, deterministic mode falls back to "no match" (same as 3.6).
+
+### Test 5 — Sandbox + persistence still hold
+
+All phase 3.6 tests still pass (regression). Sandbox catches hostile imports;
+artifacts survive restart; vault-backed secrets are preserved.
+
+### What "phase 3.7 + 3.8 passing" means
+
+You've proven:
+1. **OAuth2 reach.** Gmail/GCal-class APIs work end-to-end with token refresh.
+2. **Spec discovery.** Toolsmith can find APIs not in the curated index.
+3. **Self-correcting codegen.** Bad code gets rewritten with feedback; only working tools register.
+
+## What's still NOT done — the honest "are we done?" answer
+
+Even with 3.7 + 3.8, these are real, useful features that don't exist yet:
+
+| What | Phase | Why it matters |
+|---|---|---|
+| **OAuth2 redirect flow** (no token-pasting) | 3.7+ stretch | The bring-your-own-token UX works but is fiddly. Real consumer apps need a one-click OAuth flow. |
+| **Browser-driven tools** | **4** | DoorDash, most consumer apps. Anything without a documented API. This is a huge slice of the real world. |
+| **Tool composition** (Toolsmith builds a single tool that internally calls multiple atomic tools) | 4.5 | Today cuga composes at runtime. For reusable workflows ("daily Stripe digest"), composing once is much cheaper. |
+| **Health checks & decay** | 5 | APIs change. Toolsmith generates against today's API; 6 months later, half your tools silently break. |
+| **Multi-user / per-user state** | infra | Currently single-user. Vault, registry, artifacts are global. |
+| **Cost meters / budget caps** | infra | An off-by-one in the revise loop could cost real money. There's no enforcement. |
+| **Subprocess sandboxing** | 4 | Import allowlist is a tripwire, not a sandbox. Trustworthy generated code is one thing; arbitrary code from a hostile spec_index entry is another. |
+| **Cross-domain insights over the user's data** | 6 | The genuinely novel demo. Nothing siloed-app can ship. |
+
+So no, **we're not "truly done."** What we are after 3.8 is **architecturally complete for documented APIs.** Every phase from 4 onward is about *which kinds of capabilities* the system reaches, or about making it production-grade. The bones are right.
+
+## Roadmap (phases 4+)
+
+Architecture is feature-complete for documented APIs (3.0 → 3.8). What's left:
 
 | Phase | Adds | Why |
 |---|---|---|
-| **3.7** | OAuth2 redirect flow + dynamic spec discovery (Smithery / openapi-directory search) | Unlocks Google / Microsoft / Slack / GitHub user-scoped APIs (calendar, drive, gmail, etc.) |
-| **3.8** | Code-revision loop — failed probe → Coder is asked to revise based on the failure; up to N retries | Quality bump; closes the gap on flaky generation |
-| **4** | Browser-task source — sites with no API at all; Toolsmith drives cuga's web-agent side | DoorDash / consumer-app class of problems |
-| **4.5** | Tool composition — Toolsmith builds tools that compose existing tools. *"Ride summary"* = Uber API + receipt parser + categorizer. | Multi-step workflows |
-| **5** | Health checks + auto-quarantine + auto-regenerate-from-provenance | Self-maintaining toolbox |
+| **4** | Browser-task source — Toolsmith drives cuga's web-agent side for sites with no API | DoorDash / consumer apps without APIs |
+| **4.5** | Tool composition — single tool internally chains multiple atomic tools | Reusable workflows like "daily Stripe digest" |
+| **5** | Health checks + auto-quarantine + auto-regenerate-from-provenance | Self-maintaining toolbox at month 3+ |
 | **6** | Cross-domain mining over the unified data layer | Genuinely novel demos that siloed apps can't ship |
 
-Phase 3.6 unlocked **bearer / api-key / query-param auth** — most documented REST APIs. Phase 3.7's OAuth2 flow is the next big jump because that's what every consumer-grade API uses.
+After 3.7 + 3.8 the architecture is done. Phase 4 onward is about *coverage* and *operations*, not new architectural primitives.
 
 ## Run without Docker
 

@@ -40,18 +40,35 @@ class _Endpoint:
 
 @dataclass
 class _AuthSpec:
-    type: str                       # "bearer_token" | "api_key_header" | "api_key_query"
-    secret_key: str                 # vault key name
-    header: str | None = None       # for header types
-    param: str | None = None        # for query-param type
-    prefix: str = ""                # e.g. "Bearer " for bearer
-    help: str = ""                  # human-readable instructions
+    """
+    Auth schemes (phase 3.6 + 3.7):
+      bearer_token   — single static token, header injection
+      api_key_header — single static value in a custom header
+      api_key_query  — single static value in a query param
+      oauth2_token   — bearer token PLUS optional refresh_token + token_url;
+                       adapter refreshes on 401 and persists the new token
+    """
+    type: str
+    secret_key: str                 # primary vault key (access_token for OAuth2)
+    header: str | None = None
+    param: str | None = None
+    prefix: str = ""
+    help: str = ""
+    # OAuth2-specific:
+    refresh_secret_key: str | None = None   # vault key for the refresh token
+    token_url: str | None = None            # POST endpoint to refresh
+    client_id_key: str | None = None        # vault key for client_id (if needed)
+    client_secret_key: str | None = None    # vault key for client_secret (if needed)
 
     def to_dict(self) -> dict:
         return {
             "type": self.type, "secret_key": self.secret_key,
             "header": self.header, "param": self.param,
             "prefix": self.prefix, "help": self.help,
+            "refresh_secret_key": self.refresh_secret_key,
+            "token_url": self.token_url,
+            "client_id_key": self.client_id_key,
+            "client_secret_key": self.client_secret_key,
         }
 
 
@@ -81,6 +98,10 @@ class OpenAPISource:
                     type=a["type"], secret_key=a["secret_key"],
                     header=a.get("header"), param=a.get("param"),
                     prefix=a.get("prefix", ""), help=a.get("help", ""),
+                    refresh_secret_key=a.get("refresh_secret_key"),
+                    token_url=a.get("token_url"),
+                    client_id_key=a.get("client_id_key"),
+                    client_secret_key=a.get("client_secret_key"),
                 )
             self._entries.append(_SpecEntry(
                 id=e["id"], name=e["name"], description=e["description"],
@@ -157,6 +178,18 @@ class OpenAPISource:
         if entry is None or not entry.endpoints:
             raise ValueError(f"OpenAPI entry {spec_id!r} has no endpoints")
         ep = entry.endpoints[0]
+
+        secrets: list[str] = []
+        if entry.auth:
+            secrets.append(entry.auth.secret_key)
+            # OAuth2 stores refresh + client creds alongside the access token
+            # so the adapter can refresh autonomously when the access token
+            # expires. UI prompts for all required keys at install time.
+            for extra in (entry.auth.refresh_secret_key,
+                          entry.auth.client_id_key, entry.auth.client_secret_key):
+                if extra:
+                    secrets.append(extra)
+
         return RealizedTool(
             proposal_id=proposal.id,
             tool_name=ep.tool_name,
@@ -165,5 +198,5 @@ class OpenAPISource:
             invoke_method=ep.method,
             invoke_params=ep.params,
             sample_input=ep.probe_input,
-            requires_secrets=[entry.auth.secret_key] if entry.auth else [],
+            requires_secrets=secrets,
         )

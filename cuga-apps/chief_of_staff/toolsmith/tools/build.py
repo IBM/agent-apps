@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx  # used by search_apis_guru_directory
+
 log = logging.getLogger(__name__)
 
 # Make backend/acquisition/* importable so we can reuse phase-2/3 logic
@@ -200,6 +202,50 @@ def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callbac
         cannot be probed yet and the caller needs to ask the user."""
         return json.dumps({"available": vault.get(tool_id, secret_key) is not None})
 
+    @tool
+    async def search_apis_guru_directory(query: str) -> str:
+        """Phase 3.7: search the public APIs.guru directory for OpenAPI specs
+        matching a free-text query. Use this only when the curated catalog
+        and openapi index miss — APIs.guru indexes ~2,500 public APIs.
+
+        Returns JSON: list of {name, description, spec_url, score} (top 5).
+        Note: caller still needs to fetch and analyze the full spec before
+        declaring an endpoint — this tool only narrows the search."""
+        import re as _re
+        query_tokens = set(_re.findall(r"[a-z0-9]+", (query or "").lower()))
+        if not query_tokens:
+            return json.dumps([])
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get("https://api.apis.guru/v2/list.json")
+                r.raise_for_status()
+                catalog = r.json()
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"error": f"apis.guru unreachable: {exc}"})
+
+        scored = []
+        for provider, body in catalog.items():
+            versions = (body or {}).get("versions") or {}
+            preferred = (body or {}).get("preferred")
+            v = versions.get(preferred) or (next(iter(versions.values())) if versions else {})
+            info = (v.get("info") or {})
+            text = " ".join([
+                provider, info.get("title", ""), info.get("description", ""),
+            ]).lower()
+            tokens = set(_re.findall(r"[a-z0-9]+", text))
+            overlap = query_tokens & tokens
+            if not overlap:
+                continue
+            score = len(overlap) / max(len(query_tokens), 1)
+            scored.append({
+                "name": info.get("title") or provider,
+                "description": (info.get("description") or "")[:200],
+                "spec_url": v.get("swaggerUrl") or v.get("swaggerYamlUrl"),
+                "score": round(score, 3),
+            })
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return json.dumps(scored[:5])
+
     return [
         search_catalog,
         search_openapi_index,
@@ -210,4 +256,5 @@ def build_toolbelt(coder, store, catalog, openapi_source, vault, mounted_callbac
         list_existing_tools,
         remove_tool_artifact,
         check_secret_available,
+        search_apis_guru_directory,
     ]

@@ -176,11 +176,86 @@ def _default_secret_lookup(artifact_id: str, key: str):
 
 
 _secret_lookup = _default_secret_lookup
+# Optional: a function that updates a secret in the upstream vault. Phase
+# 3.7's OAuth2 refresh uses this to persist a freshly-minted access token
+# back into the toolsmith vault. Set by main; tests can override.
+_secret_writer = None
 
 
 def set_secret_lookup(fn):
     global _secret_lookup
     _secret_lookup = fn
+
+
+def set_secret_writer(fn):
+    global _secret_writer
+    _secret_writer = fn
+
+
+# Per-tool auth metadata, indexed by artifact id. Populated from /agent/reload
+# alongside extra_tools_spec; used by the OAuth2 refresh path.
+_auth_meta: dict = {}
+
+
+async def _refresh_oauth2_token(artifact_id: str, auth_meta: dict) -> str | None:
+    """Use the stored refresh token + client creds to mint a new access token.
+    Persists the new token (and any new refresh_token) back to the vault.
+    Returns the new access token or None on failure.
+    """
+    refresh_key = auth_meta.get("refresh_secret_key")
+    token_url = auth_meta.get("token_url")
+    client_id_key = auth_meta.get("client_id_key")
+    client_secret_key = auth_meta.get("client_secret_key")
+    if not (refresh_key and token_url and client_id_key and client_secret_key):
+        log.info("OAuth2 refresh skipped — auth_meta is incomplete for %r", artifact_id)
+        return None
+
+    refresh_token = _secret_lookup(artifact_id, refresh_key)
+    client_id = _secret_lookup(artifact_id, client_id_key)
+    client_secret = _secret_lookup(artifact_id, client_secret_key)
+    if not (refresh_token and client_id and client_secret):
+        return None
+
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(token_url, data=payload)
+            r.raise_for_status()
+            data = r.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("OAuth2 refresh failed for %r: %s", artifact_id, exc)
+        return None
+
+    new_access = data.get("access_token")
+    if not new_access:
+        log.warning("OAuth2 refresh response missing access_token for %r", artifact_id)
+        return None
+
+    # Persist to in-memory state.
+    secret_key = auth_meta.get("secret_key")
+    if secret_key:
+        _State.secrets.setdefault(artifact_id, {})[secret_key] = new_access
+    new_refresh = data.get("refresh_token")
+    if new_refresh:
+        _State.secrets.setdefault(artifact_id, {})[refresh_key] = new_refresh
+
+    # Best-effort: persist back to the upstream vault so other adapter
+    # restarts / probes see the refreshed token.
+    if _secret_writer is not None:
+        try:
+            await _secret_writer(artifact_id, secret_key, new_access)
+            if new_refresh:
+                await _secret_writer(artifact_id, refresh_key, new_refresh)
+        except Exception:  # noqa: BLE001
+            log.exception("Persist refreshed OAuth2 token to vault failed")
+
+    log.info("OAuth2 refresh succeeded for %r", artifact_id)
+    return new_access
 
 
 def _build_extra_tool(spec: dict):
@@ -228,16 +303,10 @@ def _build_extra_tool(spec: dict):
             return _build_error_stub_tool(name, description, str(exc), Args, StructuredTool)
 
         async def _invoke(**kwargs):
-            secrets = {}
-            if requires_secrets:
-                if _secret_lookup is None:
-                    raise RuntimeError("secret_lookup not configured")
-                for key in requires_secrets:
-                    val = _secret_lookup(artifact_id, key)
-                    if val is None:
-                        raise RuntimeError(f"missing secret {key!r} for tool {artifact_id!r}")
-                    secrets[key] = val
-            return await func(**kwargs, **secrets)
+            return await _invoke_with_oauth2_retry(
+                artifact_id=artifact_id, func=func,
+                requires_secrets=requires_secrets, kwargs=kwargs,
+            )
 
         return StructuredTool.from_function(
             coroutine=_invoke, name=name, description=description, args_schema=Args,
@@ -270,6 +339,32 @@ def _build_extra_tool(spec: dict):
     return StructuredTool.from_function(
         coroutine=_fallback_invoke, name=name, description=description, args_schema=Args,
     )
+
+
+async def _invoke_with_oauth2_retry(*, artifact_id, func, requires_secrets, kwargs):
+    """Resolve secrets, call the tool. On HTTPStatusError 401, attempt one
+    OAuth2 refresh and retry. All other exceptions propagate."""
+    secrets = {}
+    if requires_secrets:
+        for key in requires_secrets:
+            val = _secret_lookup(artifact_id, key)
+            if val is None:
+                raise RuntimeError(f"missing secret {key!r} for tool {artifact_id!r}")
+            secrets[key] = val
+    try:
+        return await func(**kwargs, **secrets)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 401:
+            raise
+        meta = _auth_meta.get(artifact_id) or {}
+        if (meta.get("type") or "").lower() != "oauth2_token":
+            raise
+        new_access = await _refresh_oauth2_token(artifact_id, meta)
+        if not new_access:
+            raise
+        # Re-resolve secrets (the refreshed access token replaces the old).
+        secrets = {key: _secret_lookup(artifact_id, key) for key in (requires_secrets or [])}
+        return await func(**kwargs, **secrets)
 
 
 def _build_error_stub_tool(name, description, reason, Args, StructuredTool):
@@ -330,6 +425,15 @@ async def _initialize_with_servers(
         llm = create_llm()
         agent = CugaAgent(model=llm, tools=tools, special_instructions=SYSTEM_INSTRUCTIONS)
         await agent.initialize()
+
+        # Phase 3.7 — index auth metadata by artifact id so the OAuth2
+        # refresh path can find it from inside the tool wrapper.
+        global _auth_meta
+        _auth_meta = {
+            (s.get("id") or s.get("tool_name")): s.get("auth")
+            for s in extra_tools_spec
+            if s.get("auth")
+        }
 
         _State.agent = agent
         _State.tools = tools

@@ -23,8 +23,12 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from .artifact import ArtifactStore, ToolArtifact, ToolManifest, make_id_from, now_iso
-from .coders.base import CoderClient, CodeGenSpec, coder_from_env
+from .coders.base import CoderClient, CodeGenSpec, CodeGenResult, ProbeFailure, coder_from_env
 from .tools.build import build_toolbelt
+
+# Phase 3.8 — bound the revise loop. 3 retries is plenty in practice;
+# beyond that the Coder is usually working from a flawed premise.
+_MAX_REVISIONS = 3
 
 log = logging.getLogger(__name__)
 
@@ -246,6 +250,10 @@ class Toolsmith:
             self._vault.all_secrets_for(prospective_id) if realized.requires_secrets else {}
         )
         probe = await probe_realized_tool(realized, auth=auth_meta, secrets=probe_secrets)
+
+        # Phase 3.8 — if the *first* probe fails for reasons other than auth,
+        # we'll attempt the code-revise loop AFTER we have a candidate code
+        # body. The loop lives in the codegen block below.
         if not probe.get("ok"):
             return AcquireResult(
                 success=False, artifact_id=None,
@@ -254,24 +262,67 @@ class Toolsmith:
             )
         # Generate code via the Coder if available, else fall back to a
         # parameter-binding stub the adapter can execute.
+        codegen_spec = CodeGenSpec(
+            name=realized.tool_name, description=realized.description or "",
+            parameters_schema=realized.invoke_params,
+            sample_input=realized.sample_input,
+            api_base_url=proposal.spec.get("base_url"),
+            api_method=realized.invoke_method,
+            api_path=realized.invoke_url.replace(proposal.spec.get("base_url", ""), "")
+                if proposal.spec.get("base_url") else realized.invoke_url,
+            requires_secrets=realized.requires_secrets,
+            auth=auth_meta,
+        )
+        revisions: list[dict] = []
         try:
-            code_result = await self._coder.generate_tool(CodeGenSpec(
-                name=realized.tool_name, description=realized.description or "",
-                parameters_schema=realized.invoke_params,
-                sample_input=realized.sample_input,
-                api_base_url=proposal.spec.get("base_url"),
-                api_method=realized.invoke_method,
-                api_path=realized.invoke_url.replace(proposal.spec.get("base_url", ""), "")
-                    if proposal.spec.get("base_url") else realized.invoke_url,
-                requires_secrets=realized.requires_secrets,
-                auth=auth_meta,
-            ))
-            code = code_result.code
+            code_result = await self._coder.generate_tool(codegen_spec)
             coder_name = self._coder.name
         except Exception as exc:  # noqa: BLE001
             log.warning("Coder unavailable in deterministic path: %s", exc)
-            code = _fallback_stub_code(realized, auth_meta)
+            code_result = CodeGenResult(code=_fallback_stub_code(realized, auth_meta), notes="fallback")
             coder_name = "fallback_stub"
+
+        # Phase 3.8 — revise loop. Execute the generated code; if it fails,
+        # ask the Coder to revise based on the failure. Up to _MAX_REVISIONS.
+        from acquisition.probe import probe_executed_code  # type: ignore[import-not-found]
+        exec_probe: dict = {}
+        for attempt in range(_MAX_REVISIONS + 1):
+            exec_probe = await probe_executed_code(
+                code_result.code, realized.tool_name,
+                realized.sample_input, secrets=probe_secrets,
+            )
+            revisions.append({
+                "attempt": attempt, "ok": exec_probe.get("ok"),
+                "reason": exec_probe.get("reason"),
+            })
+            if exec_probe.get("ok") or coder_name == "fallback_stub":
+                break
+            if attempt == _MAX_REVISIONS:
+                break
+            try:
+                feedback = ProbeFailure(
+                    reason=exec_probe.get("reason", ""),
+                    status_code=exec_probe.get("status_code"),
+                    response_excerpt=str(exec_probe.get("response_excerpt", ""))[:600],
+                )
+                code_result = await self._coder.revise_tool(code_result, feedback)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Coder.revise_tool failed: %s — keeping last code", exc)
+                break
+
+        code = code_result.code
+        if not exec_probe.get("ok"):
+            return AcquireResult(
+                success=False, artifact_id=None,
+                summary=(
+                    f"Generated code failed exec-probe after {len(revisions) - 1} "
+                    f"revision(s): {exec_probe.get('reason', 'unknown')}"
+                ),
+                transcript=[
+                    {"step": "url_probe", "result": probe},
+                    {"step": "exec_probe_revisions", "history": revisions},
+                ],
+            )
 
         artifact = ToolArtifact(
             manifest=ToolManifest(
@@ -283,17 +334,29 @@ class Toolsmith:
                     "source": "openapi", "spec_id": proposal.spec.get("spec_id"),
                     "coder": coder_name, "created_at": now_iso(),
                     "auth_type": (auth_meta or {}).get("type"),
+                    "revisions": revisions,
                 },
+                auth=auth_meta,
             ),
-            code=code, last_probe={**probe, "at": now_iso()},
+            code=code,
+            last_probe={**probe, "exec_probe": exec_probe, "at": now_iso()},
         )
         self._store.save(artifact)
         await self._on_change(artifact)
+        revision_summary = (
+            f" after {len(revisions) - 1} revision(s)" if len(revisions) > 1 else ""
+        )
         return AcquireResult(
             success=True, artifact_id=artifact.manifest.id,
-            summary=f"Generated {realized.tool_name} via {coder_name} and probed successfully.",
-            transcript=[{"step": "openapi_probe", "result": probe},
-                        {"step": "register", "artifact_id": artifact.manifest.id}],
+            summary=(
+                f"Generated {realized.tool_name} via {coder_name}{revision_summary} "
+                f"and probed successfully."
+            ),
+            transcript=[
+                {"step": "url_probe", "result": probe},
+                {"step": "exec_probe_revisions", "history": revisions},
+                {"step": "register", "artifact_id": artifact.manifest.id},
+            ],
         )
 
 

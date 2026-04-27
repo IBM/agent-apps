@@ -1,19 +1,25 @@
 """Probe harness — the autoresearch keep/discard gate.
 
-For a freshly-realized tool:
-  1. Synthesize / use a known-safe input (declared in the source's spec).
-  2. Invoke the tool.
-  3. Structural check — did we get a valid response shape?
-  4. (Optional) LLM judge — does the response look like real, useful data?
-  5. Return ok=True/False with a structured reason.
+Two probe modes:
 
-If any step fails, the proposal is *not* registered and the user sees why.
+  probe_realized_tool   — hits the *upstream URL* with httpx using the
+                          source's declared sample_input. Cheap; validates
+                          the endpoint is reachable and well-shaped.
+
+  probe_executed_code   — exec()s the Coder's *generated Python* against
+                          the same sample_input + secrets, then sanity-checks
+                          the return value. Phase 3.8: failures here drive
+                          the revise loop.
+
+If any probe fails, the proposal is *not* registered and the user sees why.
 This is the difference between "the agent generates plausible-looking
 tools" and "the agent ships tools that demonstrably work."
 """
 
 from __future__ import annotations
 
+import ast
+import asyncio
 import json
 import logging
 import re
@@ -189,6 +195,79 @@ def _parse_judge_output(text: str) -> dict:
         return {"plausible": bool(obj.get("plausible")), "reason": str(obj.get("reason", ""))}
     except json.JSONDecodeError:
         return {"plausible": True, "reason": "judge JSON malformed; deferring to structural ok"}
+
+
+_EXEC_ALLOWED_TOP_IMPORTS = {
+    "httpx", "json", "re", "datetime", "urllib", "asyncio", "typing",
+    "math", "base64", "hashlib", "hmac", "uuid", "time",
+    "pydantic", "typing_extensions",
+}
+
+
+async def probe_executed_code(
+    code: str,
+    function_name: str,
+    sample_input: dict,
+    secrets: dict | None = None,
+) -> dict:
+    """Phase 3.8 — exec the Coder's output and call the function with the
+    sample input + secrets. Returns the same {ok, reason, ...} shape as
+    probe_realized_tool. Used by the revise loop.
+    """
+    # Validate imports cheaply before exec.
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return {"ok": False, "reason": f"syntax error: {exc}"}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for n in node.names:
+                top = n.name.split(".")[0]
+                if top not in _EXEC_ALLOWED_TOP_IMPORTS:
+                    return {"ok": False, "reason": f"disallowed import: {n.name!r}"}
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top and top not in _EXEC_ALLOWED_TOP_IMPORTS:
+                return {"ok": False, "reason": f"disallowed import: from {node.module!r}"}
+
+    namespace: dict = {"__builtins__": __builtins__}
+    try:
+        exec(compile(tree, f"<probe:{function_name}>", "exec"), namespace)  # noqa: S102
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"exec failure: {exc}"}
+
+    func = namespace.get(function_name)
+    if func is None or not asyncio.iscoroutinefunction(func):
+        return {"ok": False, "reason": f"no async function named {function_name!r} in code"}
+
+    kwargs = {**(sample_input or {}), **(secrets or {})}
+    try:
+        result = await asyncio.wait_for(func(**kwargs), timeout=_PROBE_TIMEOUT)
+    except TypeError as exc:
+        return {"ok": False, "reason": f"function signature mismatch: {exc}"}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "ok": False,
+            "reason": f"upstream http {exc.response.status_code}",
+            "status_code": exc.response.status_code,
+            "response_excerpt": (exc.response.text or "")[:600],
+        }
+    except (httpx.HTTPError, OSError) as exc:
+        return {"ok": False, "reason": f"network error: {exc}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"runtime error: {exc!r}"}
+
+    if result is None:
+        return {"ok": False, "reason": "function returned None"}
+    if isinstance(result, (list, dict)) and len(result) == 0:
+        return {"ok": False, "reason": "function returned empty payload"}
+
+    return {
+        "ok": True,
+        "reason": "executed code passed",
+        "response": _truncate_payload(result),
+    }
 
 
 def _truncate_payload(payload: Any, max_chars: int = 1500) -> Any:

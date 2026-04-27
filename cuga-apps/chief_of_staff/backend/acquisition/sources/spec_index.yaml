@@ -130,6 +130,101 @@ apis:
           q: language:python stars:>10000
           per_page: 1
 
+  - id: gmail_send
+    name: Gmail Send
+    description: Send email through your Google Gmail account.
+    capabilities:
+      - send email
+      - send mail
+      - email someone
+      - gmail send
+      - compose email
+    base_url: https://gmail.googleapis.com/gmail/v1
+    auth:
+      type: oauth2_token
+      header: Authorization
+      prefix: "Bearer "
+      secret_key: gmail_access_token
+      refresh_secret_key: gmail_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      client_id_key: google_oauth_client_id
+      client_secret_key: google_oauth_client_secret
+      help: |
+        Phase 3.7 uses bring-your-own-token OAuth2:
+        1. Create OAuth2 credentials at https://console.cloud.google.com
+           (web client, redirect to https://developers.google.com/oauthplayground)
+        2. At https://developers.google.com/oauthplayground, select
+           Gmail API → https://www.googleapis.com/auth/gmail.send → Authorize
+        3. Exchange the code for tokens — copy access_token AND refresh_token
+        4. Paste them below along with your client_id and client_secret.
+        Toolsmith will refresh access tokens automatically when they expire.
+    endpoints:
+      - tool_name: gmail_send_message
+        description: Send an email. The body is a base64url-encoded RFC 2822 message.
+        method: POST
+        path: /users/me/messages/send
+        params:
+          raw:
+            type: string
+            description: |
+              Base64url-encoded RFC 2822 message. The agent must construct
+              this — typically: From, To, Subject headers + blank line + body,
+              then base64url-encoded.
+            required: true
+        probe_input:
+          raw: VG86IHlvdUBleGFtcGxlLmNvbQpTdWJqZWN0OiBwcm9iZQoKaGVsbG8=
+
+  - id: gcal_events
+    name: Google Calendar Events
+    description: List and create events on your Google Calendar.
+    capabilities:
+      - calendar events
+      - list calendar
+      - create event
+      - schedule meeting
+      - google calendar
+    base_url: https://www.googleapis.com/calendar/v3
+    auth:
+      type: oauth2_token
+      header: Authorization
+      prefix: "Bearer "
+      secret_key: gcal_access_token
+      refresh_secret_key: gcal_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      client_id_key: google_oauth_client_id
+      client_secret_key: google_oauth_client_secret
+      help: |
+        Same OAuth playground flow as Gmail (above), but pick the scope
+        https://www.googleapis.com/auth/calendar.events instead.
+        Reuses the same google_oauth_client_id and google_oauth_client_secret.
+    endpoints:
+      - tool_name: gcal_list_events
+        description: List events on a calendar within a time window.
+        method: GET
+        path: /calendars/{calendarId}/events
+        params:
+          calendarId:
+            type: string
+            description: Calendar ID — "primary" for the user's main calendar.
+            required: true
+            default: primary
+          timeMin:
+            type: string
+            description: ISO8601 lower bound for event start time.
+            required: false
+          timeMax:
+            type: string
+            description: ISO8601 upper bound.
+            required: false
+          maxResults:
+            type: integer
+            description: How many events to return (max 250).
+            required: false
+            default: 10
+        probe_input:
+          calendarId: primary
+          maxResults: 1
+
   - id: openweather
     name: OpenWeather Current API
     description: Real-time weather + 5-day forecast via OpenWeather. Free
