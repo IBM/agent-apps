@@ -53,7 +53,7 @@ async def test_openapi_path_probes_and_registers(smith, monkeypatch):
     probe and only register on success."""
     from acquisition import probe as probe_mod
 
-    async def fake_probe(realized, llm=None, timeout=None):
+    async def fake_probe(realized, llm=None, timeout=None, auth=None, secrets=None):
         return {"ok": True, "status_code": 200, "response": {"name": "France"}, "reason": "ok"}
 
     monkeypatch.setattr(probe_mod, "probe_realized_tool", fake_probe)
@@ -72,7 +72,7 @@ async def test_openapi_path_probes_and_registers(smith, monkeypatch):
 async def test_probe_failure_blocks_registration(smith, monkeypatch):
     from acquisition import probe as probe_mod
 
-    async def failing_probe(realized, llm=None, timeout=None):
+    async def failing_probe(realized, llm=None, timeout=None, auth=None, secrets=None):
         return {"ok": False, "reason": "http 404", "status_code": 404}
 
     monkeypatch.setattr(probe_mod, "probe_realized_tool", failing_probe)

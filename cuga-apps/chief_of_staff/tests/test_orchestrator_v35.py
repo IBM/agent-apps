@@ -19,14 +19,14 @@ from orchestrator import Orchestrator  # noqa: E402
 
 class _StubPlanner(AgentClient):
     def __init__(self):
-        self.reload_calls: list[tuple[list[str], list[dict]]] = []
+        self.reload_calls: list[tuple[list[str], list[dict], dict]] = []
         self.next_result: AgentResult = AgentResult(answer="ok")
 
     async def plan_and_execute(self, message, thread_id="default"):
         return self.next_result
 
-    async def reload(self, servers, extra_tools=None):
-        self.reload_calls.append((list(servers), list(extra_tools or [])))
+    async def reload(self, servers, extra_tools=None, secrets=None):
+        self.reload_calls.append((list(servers), list(extra_tools or []), dict(secrets or {})))
         return {"status": "ok", "servers_loaded": list(servers),
                 "tool_count": len(servers) * 5 + len(extra_tools or []),
                 "extra_tool_count": len(extra_tools or [])}
@@ -91,7 +91,7 @@ async def test_chat_with_gap_calls_toolsmith(orch):
     assert turn.acquisition["artifact_id"] == "openapi__get_weather"
 
     # After successful acquire, planner should be reloaded with the new state.
-    servers, extras = planner.reload_calls[-1]
+    servers, extras, _secrets = planner.reload_calls[-1]
     assert "web" in servers and "local" in servers and "code" in servers
     assert extras == [{"tool_name": "get_weather"}]
 
@@ -121,7 +121,7 @@ async def test_sync_planner_merges_baseline_and_state(orch):
         "extra_tools": [{"tool_name": "get_country_by_name"}],
     }
     await o.sync_planner_with_toolsmith()
-    servers, extras = planner.reload_calls[-1]
+    servers, extras, _secrets = planner.reload_calls[-1]
     assert servers == ["web", "local", "code", "geo", "knowledge"]
     assert extras == [{"tool_name": "get_country_by_name"}]
 

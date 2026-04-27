@@ -33,6 +33,9 @@ class CodeGenSpec:
     api_path: Optional[str] = None         # may include {path_param}
     requires_secrets: list[str] = field(default_factory=list)
     extra_context: str = ""                # caller can dump anything else useful for codegen
+    # Phase 3.6: auth scheme for the API. Coder uses this to wire the
+    # secret into the right place (header/query/etc.).
+    auth: Optional[dict] = None            # {type, secret_key, header?, param?, prefix?}
 
 
 @dataclass

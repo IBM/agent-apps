@@ -61,6 +61,10 @@ class AcquireResult:
     artifact_id: Optional[str]
     summary: str
     transcript: list[dict]
+    # Phase 3.6: when an acquisition is blocked because the user hasn't
+    # provided required credentials, this carries the details so the UI can
+    # prompt for them. Distinct from regular failure (probe miss, etc.).
+    needs_secrets: Optional[dict] = None  # {tool_id, required, missing, help}
 
 
 class Toolsmith:
@@ -106,6 +110,10 @@ class Toolsmith:
     @property
     def store(self) -> ArtifactStore:
         return self._store
+
+    @property
+    def vault(self):
+        return self._vault
 
     @property
     def llm(self):
@@ -207,7 +215,37 @@ class Toolsmith:
             )
         proposal = op_proposals[0]
         realized = await self._openapi_source.realize(proposal)
-        probe = await probe_realized_tool(realized)
+
+        # Auth check — if the chosen API needs secrets we don't have, stop
+        # before probing and tell the caller what's missing.
+        auth_meta = (proposal.spec or {}).get("auth")
+        prospective_id = make_id_from(realized.tool_name, source="openapi")
+        if realized.requires_secrets:
+            missing = self._vault.missing(prospective_id, realized.requires_secrets)
+            if missing:
+                return AcquireResult(
+                    success=False, artifact_id=None,
+                    summary=(
+                        f"{proposal.name} needs credentials before I can build it: "
+                        + ", ".join(missing) + "."
+                    ),
+                    transcript=[{"step": "auth_block", "missing": missing}],
+                    needs_secrets={
+                        "tool_id": prospective_id,
+                        "tool_name": realized.tool_name,
+                        "api_name": proposal.name,
+                        "required": list(realized.requires_secrets),
+                        "missing": missing,
+                        "auth": auth_meta,
+                        "help": (auth_meta or {}).get("help", ""),
+                    },
+                )
+
+        # Run the probe with secrets injected if any.
+        probe_secrets = (
+            self._vault.all_secrets_for(prospective_id) if realized.requires_secrets else {}
+        )
+        probe = await probe_realized_tool(realized, auth=auth_meta, secrets=probe_secrets)
         if not probe.get("ok"):
             return AcquireResult(
                 success=False, artifact_id=None,
@@ -225,21 +263,27 @@ class Toolsmith:
                 api_method=realized.invoke_method,
                 api_path=realized.invoke_url.replace(proposal.spec.get("base_url", ""), "")
                     if proposal.spec.get("base_url") else realized.invoke_url,
+                requires_secrets=realized.requires_secrets,
+                auth=auth_meta,
             ))
             code = code_result.code
             coder_name = self._coder.name
         except Exception as exc:  # noqa: BLE001
             log.warning("Coder unavailable in deterministic path: %s", exc)
-            code = _fallback_stub_code(realized)
+            code = _fallback_stub_code(realized, auth_meta)
             coder_name = "fallback_stub"
 
         artifact = ToolArtifact(
             manifest=ToolManifest(
-                id=make_id_from(realized.tool_name, source="openapi"),
+                id=prospective_id,
                 name=realized.tool_name, description=realized.description or "",
                 parameters_schema=realized.invoke_params,
-                provenance={"source": "openapi", "spec_id": proposal.spec.get("spec_id"),
-                            "coder": coder_name, "created_at": now_iso()},
+                requires_secrets=list(realized.requires_secrets),
+                provenance={
+                    "source": "openapi", "spec_id": proposal.spec.get("spec_id"),
+                    "coder": coder_name, "created_at": now_iso(),
+                    "auth_type": (auth_meta or {}).get("type"),
+                },
             ),
             code=code, last_probe={**probe, "at": now_iso()},
         )
@@ -307,23 +351,39 @@ def _final_message(react_result: Any) -> str:
     return str(getattr(msgs[-1], "content", ""))
 
 
-def _fallback_stub_code(realized) -> str:
-    """If the Coder can't run, emit the simple parameter-binding closure.
-    The adapter's _build_extra_tool() can execute this kind of spec."""
+def _fallback_stub_code(realized, auth_meta: dict | None = None) -> str:
+    """If the Coder can't run, emit a runnable parameter-binding function
+    that the adapter exec()s. Honors the auth scheme by adding the secret
+    parameter at the end of the signature and wiring it into headers/params."""
+    secret_param = (auth_meta or {}).get("secret_key")
+    auth_type = (auth_meta or {}).get("type")
+    sig_extra = f", {secret_param}: str" if secret_param else ""
+
+    auth_setup = ""
+    if auth_type == "bearer_token":
+        prefix = (auth_meta or {}).get("prefix", "Bearer ")
+        header = (auth_meta or {}).get("header", "Authorization")
+        auth_setup = f'    headers[{header!r}] = {prefix!r} + {secret_param}\n'
+    elif auth_type == "api_key_header":
+        header = (auth_meta or {}).get("header", "X-Api-Key")
+        auth_setup = f'    headers[{header!r}] = {secret_param}\n'
+    elif auth_type == "api_key_query":
+        param = (auth_meta or {}).get("param", "api_key")
+        auth_setup = f'    params[{param!r}] = {secret_param}\n'
+
     return (
-        f"# Fallback stub — Coder was unavailable. The cuga adapter\n"
-        f"# substitutes path params and calls the URL with httpx.\n"
-        f"# This file is mostly informational in fallback mode.\n"
-        f"async def {realized.tool_name}(**kwargs):\n"
+        f"async def {realized.tool_name}(**kwargs{sig_extra}):\n"
         f"    import httpx\n"
         f"    url = {realized.invoke_url!r}\n"
-        f"    for k, v in list(kwargs.items()):\n"
+        f"    for k in list(kwargs):\n"
         f"        token = '{{' + k + '}}'\n"
         f"        if token in url:\n"
-        f"            url = url.replace(token, str(v))\n"
-        f"            kwargs.pop(k)\n"
+        f"            url = url.replace(token, str(kwargs.pop(k)))\n"
+        f"    headers = {{}}\n"
+        f"    params = dict(kwargs)\n"
+        f"{auth_setup}"
         f"    async with httpx.AsyncClient(timeout=30) as c:\n"
-        f"        r = await c.{realized.invoke_method.lower()}(url, params=kwargs)\n"
+        f"        r = await c.{realized.invoke_method.lower()}(url, params=params, headers=headers)\n"
         f"        r.raise_for_status()\n"
         f"        return r.json()\n"
     )

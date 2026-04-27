@@ -1,8 +1,19 @@
+export interface NeedsSecrets {
+  tool_id: string;
+  tool_name: string;
+  api_name: string;
+  required: string[];
+  missing: string[];
+  auth: { type: string; secret_key: string; help?: string } | null;
+  help: string;
+}
+
 export interface AcquisitionResult {
   success: boolean;
   artifact_id: string | null;
   summary: string;
   transcript: { role: string; content: string }[];
+  needs_secrets: NeedsSecrets | null;
 }
 
 export interface ChatResponse {
@@ -88,5 +99,34 @@ export async function removeArtifact(artifactId: string): Promise<{ removed: boo
     method: 'DELETE',
   });
   if (!r.ok) throw new Error(`remove failed: ${r.status}`);
+  return r.json();
+}
+
+export async function setSecret(toolId: string, secretKey: string, value: string): Promise<{ stored: boolean }> {
+  const r = await fetch(`${BASE}/vault/secret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_id: toolId, secret_key: secretKey, value }),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '');
+    throw new Error(`secret set failed: ${r.status} ${detail}`);
+  }
+  return r.json();
+}
+
+export async function deleteSecret(toolId: string, secretKey?: string): Promise<{ deleted: boolean }> {
+  const r = await fetch(`${BASE}/vault/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_id: toolId, secret_key: secretKey ?? null }),
+  });
+  if (!r.ok) throw new Error(`secret delete failed: ${r.status}`);
+  return r.json();
+}
+
+export async function listVaultKeys(toolId: string): Promise<{ tool_id: string; keys: string[]; backend: string }> {
+  const r = await fetch(`${BASE}/vault/keys/${encodeURIComponent(toolId)}`);
+  if (!r.ok) throw new Error(`vault keys failed: ${r.status}`);
   return r.json();
 }

@@ -9,3 +9,5 @@ PyYAML>=6.0
 langgraph>=0.6.0
 langchain-core>=0.3.0
 anthropic>=0.50.0
+# Phase 3.6 — OS keyring (optional; vault falls back to SQLite if unavailable).
+keyring>=24.0

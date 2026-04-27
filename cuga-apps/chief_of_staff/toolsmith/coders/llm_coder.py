@@ -38,10 +38,17 @@ Constraints:
 - Pass non-path arguments as query params for GET, JSON body otherwise.
 - Return the parsed JSON response.
 - Do NOT swallow exceptions; let them propagate.
-- Keep it under 30 lines.
+- Keep it under 40 lines.
+
+If an `Auth` section is provided, the function MUST accept the listed secret
+parameters as additional keyword arguments AT THE END of the signature (after
+the user-facing parameters), and use them according to the auth scheme:
+  - bearer_token   : add `headers["Authorization"] = "<prefix><token>"`
+  - api_key_header : add `headers["<header>"] = <key>`
+  - api_key_query  : add the secret to params under `<param>`
 
 You'll be given the function name, parameter schema, base URL, method, path,
-and a one-line description. Generate the function body that wraps that API.
+optional auth scheme, and a one-line description.
 """
 
 
@@ -114,22 +121,39 @@ def _build_default_llm():
 
 
 def _format_spec_prompt(spec: CodeGenSpec) -> str:
-    return (
-        f"Function name: {spec.name}\n"
-        f"Description: {spec.description}\n"
-        f"Parameters:\n"
-        + "\n".join(
+    parts = [
+        f"Function name: {spec.name}",
+        f"Description: {spec.description}",
+        "Parameters:",
+        *(
             f"  - {p}: {info.get('type', 'string')}"
             f" {'(required)' if info.get('required') else '(optional)'}"
             f" — {info.get('description', '')}"
             for p, info in (spec.parameters_schema or {}).items()
-        )
-        + (f"\nBase URL: {spec.api_base_url}" if spec.api_base_url else "")
-        + (f"\nMethod: {spec.api_method}")
-        + (f"\nPath: {spec.api_path}" if spec.api_path else "")
-        + (f"\nExpected output shape: {spec.expected_output_shape}" if spec.expected_output_shape else "")
-        + (f"\nAdditional context:\n{spec.extra_context}" if spec.extra_context else "")
-    )
+        ),
+    ]
+    if spec.api_base_url:
+        parts.append(f"Base URL: {spec.api_base_url}")
+    parts.append(f"Method: {spec.api_method}")
+    if spec.api_path:
+        parts.append(f"Path: {spec.api_path}")
+    if spec.auth:
+        a = spec.auth
+        parts.append("\nAuth:")
+        parts.append(f"  type: {a.get('type')}")
+        parts.append(f"  secret_param_name: {a.get('secret_key')}")
+        if a.get("header"):
+            parts.append(f"  header: {a['header']}")
+        if a.get("param"):
+            parts.append(f"  param: {a['param']}")
+        if a.get("prefix"):
+            parts.append(f"  prefix: {a['prefix']!r}")
+        parts.append(f"  → add `{a.get('secret_key')}: str` AT THE END of the signature.")
+    if spec.expected_output_shape:
+        parts.append(f"Expected output shape: {spec.expected_output_shape}")
+    if spec.extra_context:
+        parts.append(f"Additional context:\n{spec.extra_context}")
+    return "\n".join(parts)
 
 
 _FENCE_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.DOTALL)

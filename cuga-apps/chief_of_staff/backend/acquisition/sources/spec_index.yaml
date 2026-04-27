@@ -86,3 +86,82 @@ apis:
         path: /random_joke
         params: {}
         probe_input: {}
+
+  # ─── Auth-aware entries (phase 3.6) ─────────────────────────────────
+  # Each declares its auth scheme. Toolsmith bakes the secret name into
+  # the generated tool's parameter list (hidden from cuga's schema, fetched
+  # from the vault at call time).
+
+  - id: github_search
+    name: GitHub Search API
+    description: Search public GitHub repositories. Requires a personal
+      access token (any scope works for search).
+    capabilities:
+      - github search
+      - search github repositories
+      - find repository
+      - source code search
+    base_url: https://api.github.com
+    auth:
+      type: bearer_token
+      header: Authorization
+      prefix: "Bearer "
+      secret_key: github_token
+      help: |
+        Generate at https://github.com/settings/tokens (classic) — no scopes
+        needed for public search. The token is stored in your local vault
+        and never logged.
+    endpoints:
+      - tool_name: github_search_repos
+        description: Search GitHub repositories by query string.
+        method: GET
+        path: /search/repositories
+        params:
+          q:
+            type: string
+            description: Search query (e.g. "language:python stars:>1000").
+            required: true
+          per_page:
+            type: integer
+            description: Results per page (max 100).
+            required: false
+            default: 5
+        probe_input:
+          q: language:python stars:>10000
+          per_page: 1
+
+  - id: openweather
+    name: OpenWeather Current API
+    description: Real-time weather + 5-day forecast via OpenWeather. Free
+      tier requires an API key.
+    capabilities:
+      - weather right now
+      - current temperature
+      - openweather forecast
+      - weather api with key
+    base_url: https://api.openweathermap.org/data/2.5
+    auth:
+      type: api_key_query
+      param: appid
+      secret_key: openweather_api_key
+      help: |
+        Free key at https://openweathermap.org/api — sign up, then copy the
+        API key from your account dashboard.
+    endpoints:
+      - tool_name: openweather_current
+        description: Current weather for a city by name.
+        method: GET
+        path: /weather
+        params:
+          q:
+            type: string
+            description: City name (e.g. "Tokyo,JP").
+            required: true
+          units:
+            type: string
+            description: Temperature units — metric, imperial, or standard.
+            required: false
+            default: metric
+        probe_input:
+          q: London,UK
+          units: metric

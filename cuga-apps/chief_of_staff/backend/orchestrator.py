@@ -76,9 +76,9 @@ class Orchestrator:
                 "artifact_id": outcome.artifact_id,
                 "summary": outcome.summary,
                 "transcript": outcome.transcript,
+                "needs_secrets": outcome.needs_secrets,
             }
             if outcome.success:
-                # Sync cuga with the new tool universe.
                 try:
                     await self.sync_planner_with_toolsmith()
                 except Exception:  # noqa: BLE001
@@ -95,7 +95,8 @@ class Orchestrator:
         """Pull effective state from Toolsmith and reload the planner.
 
         Called: (a) on backend startup, (b) after each successful acquisition,
-        (c) on the /internal/artifacts_changed webhook.
+        (c) on the /internal/artifacts_changed webhook (also fires when a
+            secret is added/removed — a previously-blocked tool may unblock).
         """
         state = await self._toolsmith.effective_state()
         servers = list(_baseline_servers())
@@ -103,7 +104,8 @@ class Orchestrator:
             if s not in servers:
                 servers.append(s)
         extra_tools = state.get("extra_tools", [])
-        return await self._planner.reload(servers, extra_tools=extra_tools)
+        secrets = state.get("secrets", {}) or {}
+        return await self._planner.reload(servers, extra_tools=extra_tools, secrets=secrets)
 
     async def remove_artifact(self, artifact_id: str) -> bool:
         ok = await self._toolsmith.remove_artifact(artifact_id)

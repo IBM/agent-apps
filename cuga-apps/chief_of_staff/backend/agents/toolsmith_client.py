@@ -25,6 +25,7 @@ class AcquireOutcome:
     summary: str
     transcript: list[dict]
     artifact: Optional[dict]   # mcp_tool_spec dict, or None on failure
+    needs_secrets: Optional[dict] = None
 
 
 class ToolsmithClient:
@@ -52,12 +53,15 @@ class ToolsmithClient:
                 summary=data.get("summary", ""),
                 transcript=data.get("transcript", []),
                 artifact=data.get("artifact"),
+                needs_secrets=data.get("needs_secrets"),
             )
         except httpx.HTTPError as exc:
             log.warning("toolsmith /acquire failed: %s", exc)
-            return AcquireOutcome(success=False, artifact_id=None,
-                                  summary=f"toolsmith unreachable: {exc}",
-                                  transcript=[], artifact=None)
+            return AcquireOutcome(
+                success=False, artifact_id=None,
+                summary=f"toolsmith unreachable: {exc}",
+                transcript=[], artifact=None, needs_secrets=None,
+            )
 
     async def list_artifacts(self) -> list[dict]:
         try:
@@ -93,6 +97,33 @@ class ToolsmithClient:
             return r.status_code == 200
         except httpx.HTTPError:
             return False
+
+    # ── Vault proxies ────────────────────────────────────────────────────
+    async def vault_put(self, tool_id: str, secret_key: str, value: str) -> dict:
+        r = await self._client.post(
+            f"{self._url}/vault/secret",
+            json={"tool_id": tool_id, "secret_key": secret_key, "value": value},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    async def vault_delete(self, tool_id: str, secret_key: str | None = None) -> dict:
+        r = await self._client.post(
+            f"{self._url}/vault/delete",
+            json={"tool_id": tool_id, "secret_key": secret_key},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    async def vault_list_keys(self, tool_id: str) -> dict:
+        r = await self._client.get(f"{self._url}/vault/keys/{tool_id}")
+        r.raise_for_status()
+        return r.json()
+
+    async def vault_missing(self, artifact_id: str) -> dict:
+        r = await self._client.get(f"{self._url}/vault/missing/{artifact_id}")
+        r.raise_for_status()
+        return r.json()
 
     async def aclose(self) -> None:
         await self._client.aclose()

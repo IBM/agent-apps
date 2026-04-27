@@ -82,6 +82,9 @@ class _State:
     tools: list = []
     servers_loaded: list[str] = []
     extra_tools_spec: list[dict] = []   # dicts as received in /agent/reload
+    # Per-tool secrets pushed by the backend on /agent/reload. Lives in
+    # adapter process memory only; not persisted, not logged.
+    secrets: dict[str, dict[str, str]] = {}
     lock: asyncio.Lock = asyncio.Lock()
 
 
@@ -107,30 +110,104 @@ async def _aclose_agent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dynamic tool generation — phase 3
+# Dynamic tool generation — phase 3.6
 #
-# Given a spec dict like:
-#   {"tool_name": "...", "description": "...", "invoke_url": "...",
-#    "invoke_method": "GET", "invoke_params": {"name": {"type": "string", ...}},
-#    "headers": {"Authorization": "Bearer ..."} (optional)}
-# return a LangChain StructuredTool that calls the URL with httpx.
+# Two paths, picked by which keys the spec dict has:
+#
+# A) "code" present  → Coder-generated artifact. We exec() the source against
+#    a restricted globals dict (import allowlist), pull out the entry-point
+#    function, and wrap it. Auth secrets declared in `requires_secrets` are
+#    resolved from the vault and injected as keyword arguments at call time;
+#    cuga's args_schema sees only the user-facing parameters.
+#
+# B) "code" missing  → fallback parameter-substitution closure (phase 3 v1
+#    behavior), used by catalog mounts and any spec that didn't go through
+#    the Coder. Calls invoke_url with httpx using kwargs as query/body.
 # ---------------------------------------------------------------------------
 
+import ast
+
+_ALLOWED_TOP_IMPORTS = {
+    "httpx", "json", "re", "datetime", "urllib", "asyncio", "typing",
+    "math", "base64", "hashlib", "hmac", "uuid", "time",
+    # Allow pydantic + langchain types since the Coder occasionally emits
+    # type hints from these. They're already in the env.
+    "pydantic", "typing_extensions",
+}
+
+
+class _CodeSecurityError(RuntimeError):
+    pass
+
+
+def _exec_artifact_code(code: str, function_name: str):
+    """Compile + exec generated tool code with a restricted-import gate.
+
+    Returns the entry-point coroutine function. Raises _CodeSecurityError
+    if the AST contains a disallowed import.
+    """
+    tree = ast.parse(code)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for n in node.names:
+                top = n.name.split(".")[0]
+                if top not in _ALLOWED_TOP_IMPORTS:
+                    raise _CodeSecurityError(f"disallowed import: {n.name!r}")
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top and top not in _ALLOWED_TOP_IMPORTS:
+                raise _CodeSecurityError(f"disallowed import: from {node.module!r}")
+
+    namespace: dict = {"__builtins__": __builtins__}
+    exec(compile(tree, f"<tool:{function_name}>", "exec"), namespace)  # noqa: S102
+    func = namespace.get(function_name)
+    if func is None:
+        raise ValueError(
+            f"function {function_name!r} not defined in artifact code; "
+            f"defined names: {sorted(k for k in namespace if not k.startswith('__'))}"
+        )
+    return func
+
+
+# Vault accessor — defaults to looking up _State.secrets, but tests can
+# override via set_secret_lookup().
+def _default_secret_lookup(artifact_id: str, key: str):
+    return (_State.secrets.get(artifact_id) or {}).get(key)
+
+
+_secret_lookup = _default_secret_lookup
+
+
+def set_secret_lookup(fn):
+    global _secret_lookup
+    _secret_lookup = fn
+
+
 def _build_extra_tool(spec: dict):
+    """Build a LangChain StructuredTool from a spec.
+
+    spec keys:
+      tool_name, description, invoke_params (cuga-visible param schema)
+      requires_secrets (list[str], hidden from cuga, injected at call time)
+      code (optional Python source — preferred path), entry_point_function
+      invoke_url, invoke_method (fallback path when code is absent)
+    """
     from langchain_core.tools import StructuredTool  # type: ignore[import-not-found]
     from pydantic import create_model  # type: ignore[import-not-found]
 
     name = spec["tool_name"]
     description = spec.get("description") or name
-    url = spec["invoke_url"]
-    method = (spec.get("invoke_method") or "GET").upper()
     params_schema = spec.get("invoke_params") or {}
-    headers = spec.get("headers") or {}
+    requires_secrets = list(spec.get("requires_secrets") or [])
+    artifact_id = spec.get("id") or name
 
-    # Build a pydantic model from the params schema for input validation.
+    # Build a pydantic args_schema EXCLUDING the secret kwargs — cuga must
+    # not see them or try to ask the user for them.
     type_map = {"string": str, "number": float, "integer": int, "boolean": bool}
     fields = {}
     for pname, pinfo in params_schema.items():
+        if pname in requires_secrets:
+            continue
         ptype = type_map.get((pinfo or {}).get("type", "string"), str)
         default = (pinfo or {}).get("default")
         required = (pinfo or {}).get("required", default is None)
@@ -140,10 +217,40 @@ def _build_extra_tool(spec: dict):
             fields[pname] = (ptype, default)
     Args = create_model(f"{name}_args", **fields) if fields else create_model(f"{name}_args")
 
+    # Path A: real exec of artifact code.
+    code = spec.get("code")
+    entry_point = spec.get("entry_point_function") or name
+    if code:
+        try:
+            func = _exec_artifact_code(code, entry_point)
+        except (_CodeSecurityError, SyntaxError, ValueError) as exc:
+            log.error("Artifact %r rejected: %s", artifact_id, exc)
+            return _build_error_stub_tool(name, description, str(exc), Args, StructuredTool)
+
+        async def _invoke(**kwargs):
+            secrets = {}
+            if requires_secrets:
+                if _secret_lookup is None:
+                    raise RuntimeError("secret_lookup not configured")
+                for key in requires_secrets:
+                    val = _secret_lookup(artifact_id, key)
+                    if val is None:
+                        raise RuntimeError(f"missing secret {key!r} for tool {artifact_id!r}")
+                    secrets[key] = val
+            return await func(**kwargs, **secrets)
+
+        return StructuredTool.from_function(
+            coroutine=_invoke, name=name, description=description, args_schema=Args,
+        )
+
+    # Path B: fallback parameter-substitution closure.
+    url = spec["invoke_url"]
+    method = (spec.get("invoke_method") or "GET").upper()
+    headers = spec.get("headers") or {}
     path_param_re = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
     path_params = path_param_re.findall(url)
 
-    async def _invoke(**kwargs):
+    async def _fallback_invoke(**kwargs):
         u = url
         kw = dict(kwargs)
         for pp in path_params:
@@ -161,9 +268,19 @@ def _build_extra_tool(spec: dict):
                 return r.text
 
     return StructuredTool.from_function(
-        coroutine=_invoke,
-        name=name,
-        description=description,
+        coroutine=_fallback_invoke, name=name, description=description, args_schema=Args,
+    )
+
+
+def _build_error_stub_tool(name, description, reason, Args, StructuredTool):
+    """Return a tool that always errors. Used when artifact code fails the
+    import allowlist — we still register *something* so cuga can report
+    the failure cleanly instead of crashing on unknown tool name."""
+    async def _err(**_kw):
+        raise RuntimeError(f"tool {name!r} disabled: {reason}")
+    return StructuredTool.from_function(
+        coroutine=_err, name=name,
+        description=f"{description} [disabled: {reason}]",
         args_schema=Args,
     )
 
@@ -171,6 +288,7 @@ def _build_extra_tool(spec: dict):
 async def _initialize_with_servers(
     servers: list[str] | None = None,
     extra_tools_spec: list[dict] | None = None,
+    secrets: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """(Re-)build the CugaAgent for the given MCP server set + extra tools."""
     from _mcp_bridge import load_tools  # noqa: WPS433
@@ -185,6 +303,8 @@ async def _initialize_with_servers(
         ]
     if extra_tools_spec is None:
         extra_tools_spec = list(_State.extra_tools_spec)
+    if secrets is None:
+        secrets = dict(_State.secrets)
 
     log.info("Loading MCP tool sets: %s + %d extra tools", servers, len(extra_tools_spec))
 
@@ -215,8 +335,10 @@ async def _initialize_with_servers(
         _State.tools = tools
         _State.servers_loaded = servers
         _State.extra_tools_spec = list(extra_tools_spec)
-        log.info("Cuga adapter ready — %d total tools (%d MCP + %d generated)",
-                 len(tools), len(tools) - len(extra_tools_spec), len(extra_tools_spec))
+        _State.secrets = dict(secrets)
+        log.info("Cuga adapter ready — %d total tools (%d MCP + %d generated, %d with secrets)",
+                 len(tools), len(tools) - len(extra_tools_spec),
+                 len(extra_tools_spec), len(secrets))
 
 
 app = FastAPI(title="Cuga Adapter", version="0.3.0", lifespan=lifespan)
@@ -237,6 +359,7 @@ class ChatResponse(BaseModel):
 class ReloadRequest(BaseModel):
     servers: list[str]
     extra_tools: list[dict] = []
+    secrets: dict[str, dict[str, str]] = {}
 
 
 @app.get("/health")
@@ -265,7 +388,7 @@ async def list_tools() -> list[dict]:
 @app.post("/agent/reload")
 async def reload_agent(req: ReloadRequest) -> dict:
     try:
-        await _initialize_with_servers(req.servers, req.extra_tools)
+        await _initialize_with_servers(req.servers, req.extra_tools, req.secrets)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {
@@ -273,6 +396,7 @@ async def reload_agent(req: ReloadRequest) -> dict:
         "servers_loaded": _State.servers_loaded,
         "tool_count": len(_State.tools),
         "extra_tool_count": len(_State.extra_tools_spec),
+        "tools_with_secrets": len(_State.secrets),
     }
 
 

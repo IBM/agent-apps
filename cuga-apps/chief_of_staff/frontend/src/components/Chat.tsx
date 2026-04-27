@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { AcquisitionResult, ChatResponse, sendChat } from '../api/client';
+import CredentialPrompt from './CredentialPrompt';
 
 type Turn = {
   role: 'user' | 'agent';
@@ -65,7 +66,17 @@ export default function Chat({ onToolsChanged }: Props) {
             >
               {t.text}
             </div>
-            {t.role === 'agent' && t.acquisition && <AcquisitionNotice acquisition={t.acquisition} />}
+            {t.role === 'agent' && t.acquisition && (
+              <>
+                <AcquisitionNotice acquisition={t.acquisition} />
+                {t.acquisition.needs_secrets && (
+                  <CredentialPrompt
+                    needs={t.acquisition.needs_secrets}
+                    onSubmitted={() => onToolsChanged?.()}
+                  />
+                )}
+              </>
+            )}
           </div>
         ))}
       </div>

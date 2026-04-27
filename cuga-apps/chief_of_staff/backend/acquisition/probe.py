@@ -61,6 +61,8 @@ async def probe_realized_tool(
     realized: RealizedTool,
     llm=None,
     timeout: float = _PROBE_TIMEOUT,
+    auth: dict | None = None,
+    secrets: dict | None = None,
 ) -> dict:
     """Run the probe + judge cycle. Returns a dict with at minimum:
         ok          bool
@@ -68,6 +70,10 @@ async def probe_realized_tool(
         status_code int (if HTTP call was made)
         response    parsed body (truncated)
         judge       optional dict from LLM judge
+
+    auth + secrets (phase 3.6): if the realized tool needs auth, the probe
+    injects the secret into the right place (header / query param) before
+    making the call.
     """
     if not realized.invoke_url:
         return {"ok": False, "reason": "no invoke_url to probe"}
@@ -77,11 +83,31 @@ async def probe_realized_tool(
     except ValueError as exc:
         return {"ok": False, "reason": str(exc)}
 
-    log.info("Probe call: %s %s params=%s body=%s", realized.invoke_method, url, params, body)
+    headers: dict[str, str] = {}
+    if auth and secrets:
+        secret_key = auth.get("secret_key")
+        token = (secrets or {}).get(secret_key) if secret_key else None
+        if token:
+            t = auth.get("type")
+            if t == "bearer_token":
+                header = auth.get("header", "Authorization")
+                prefix = auth.get("prefix", "Bearer ")
+                headers[header] = f"{prefix}{token}"
+            elif t == "api_key_header":
+                header = auth.get("header", "X-Api-Key")
+                headers[header] = token
+            elif t == "api_key_query":
+                params[auth.get("param", "api_key")] = token
+
+    log.info("Probe call: %s %s params(redacted=%d) body=%s",
+             realized.invoke_method, url, len(params), body)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.request(realized.invoke_method, url, params=params, json=body or None)
+            r = await client.request(
+                realized.invoke_method, url,
+                params=params, json=body or None, headers=headers,
+            )
     except (httpx.HTTPError, OSError) as exc:
         return {"ok": False, "reason": f"network error: {exc}"}
 

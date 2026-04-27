@@ -134,6 +134,57 @@ async def remove_artifact(artifact_id: str) -> dict:
     return {"removed": True, "artifact_id": artifact_id}
 
 
+class VaultPutRequest(BaseModel):
+    tool_id: str
+    secret_key: str
+    value: str
+
+
+class VaultDeleteRequest(BaseModel):
+    tool_id: str
+    secret_key: str | None = None
+
+
+@app.post("/vault/secret")
+async def vault_put(req: VaultPutRequest) -> dict:
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        return await _orchestrator.toolsmith.vault_put(req.tool_id, req.secret_key, req.value)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"toolsmith vault put failed: {exc}")
+
+
+@app.post("/vault/delete")
+async def vault_delete(req: VaultDeleteRequest) -> dict:
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        return await _orchestrator.toolsmith.vault_delete(req.tool_id, req.secret_key)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"toolsmith vault delete failed: {exc}")
+
+
+@app.get("/vault/keys/{tool_id}")
+async def vault_list_keys(tool_id: str) -> dict:
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        return await _orchestrator.toolsmith.vault_list_keys(tool_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"toolsmith vault list failed: {exc}")
+
+
+@app.get("/vault/missing/{artifact_id}")
+async def vault_missing(artifact_id: str) -> dict:
+    if not _orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        return await _orchestrator.toolsmith.vault_missing(artifact_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"toolsmith vault missing failed: {exc}")
+
+
 @app.post("/internal/artifacts_changed")
 async def artifacts_changed() -> dict:
     """Webhook called by the Toolsmith service when its artifact set changes.

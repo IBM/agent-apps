@@ -21,6 +21,14 @@ it hits a gap. Self-contained: nothing outside this directory is modified.
 - Probe harness (structural + optional LLM judge) — the autoresearch keep/discard gate
 - Live tool mounting via the cuga adapter's `extra_tools`
 
+**Phase 3.6 — real code exec + auth UX + vault**
+- **Adapter exec()s artifact code** with an import allowlist (httpx, json, re, datetime, urllib, asyncio, math, base64, hashlib, hmac, uuid, time, plus pydantic/typing). Disallowed imports register as error stubs that raise on call instead of crashing the adapter. ([adapters/cuga/server.py](adapters/cuga/server.py))
+- **Auth-aware Coder** — the LLM/Claude Coder prompt knows the auth scheme and emits the secret as the last kwarg of the function signature, hidden from cuga's args_schema.
+- **Auth-aware spec index** — `github_search` (bearer token) and `openweather` (api_key_query) added to [spec_index.yaml](backend/acquisition/sources/spec_index.yaml).
+- **Vault** with optional OS keyring backend ([backend/acquisition/vault.py](backend/acquisition/vault.py)). Falls back to SQLite + base64-XOR when keyring isn't available. Toggle with `VAULT_BACKEND=keyring`.
+- **Credential prompt UX** — when Toolsmith needs auth and the vault doesn't have it, `acquire` returns `needs_secrets` instead of failing silently. The UI renders a credential modal; user enters; backend stores in vault; user re-asks; Toolsmith retries.
+- **Secrets injected at call time** — backend pulls per-tool secrets from Toolsmith's vault via `/effective_state`, hands them to the cuga adapter on `/agent/reload`. Adapter resolves them when the tool is invoked. Never logged.
+
 **Phase 3.5 — Toolsmith service + Coder abstraction + persistent ToolArtifacts**
 - **[Toolsmith service](toolsmith/)** — own FastAPI app on port 8001, LangGraph ReAct agent with its own tool belt. The cuga adapter is the swappable planner; Toolsmith is the durable, swap-resistant brain.
 - **Internal tool belt** — search_catalog, search_openapi_index, generate_tool_code, probe_generated_tool, register_tool_artifact, etc. NOT MCP tools — agent tools the Toolsmith calls. ([toolsmith/tools/build.py](toolsmith/tools/build.py))
@@ -361,19 +369,142 @@ You've proven:
 4. The probe still rejects unverified tools.
 5. The UI is dumb — it shows what Toolsmith did, doesn't drive the decision.
 
-## Roadmap (phases 3.6+)
+## Phase 3.6 test plan — auth + real code execution
+
+Same four containers, no compose changes. Force-rebuild because the adapter
+and toolsmith images both changed.
+
+```bash
+cd cuga-apps/chief_of_staff
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+sleep 30
+curl -s http://localhost:8001/health | jq                  # toolsmith ok
+```
+
+### Test 1 — A no-auth API still works (regression)
+
+UI: *"Tell me a random joke."*
+Same flow as 3.5. Confirms the new exec path didn't break the simple case.
+
+```bash
+# Inspect the generated tool — under 3.6 the adapter actually exec()s it,
+# rather than wrapping its URL with parameter substitution.
+docker exec cuga-apps-cos-toolsmith \
+  cat /app/chief_of_staff/data/tools/openapi__get_random_joke/tool.py
+```
+
+### Test 2 — The headline: an auth-required tool surfaces a credential prompt
+
+UI: *"Search GitHub for popular Python repositories."*
+
+✅ Pass criteria:
+- Toolsmith matches the gap to `openapi:github_search`.
+- Vault has no `github_token` for it.
+- Toolsmith returns `success: false` with `needs_secrets`.
+- Chat shows a **blue credential prompt card** below the agent's reply:
+  > **GitHub Search API needs credentials**
+  > github_token: [paste secret value] [Save]
+  > (helpful instructions about generating a personal access token)
+- Click into the field, paste a GitHub PAT, click **Save**.
+- Card flips to green: *"Secret saved — re-ask your question."*
+
+### Test 3 — Re-ask after providing the credential
+
+UI: *"Search GitHub for popular Python repositories."* (again, same chat).
+
+✅ Pass criteria:
+- This time Toolsmith finds the secret, runs the probe (real GitHub API call),
+  generates the tool via the Coder, registers it.
+- Chat shows the green "Toolsmith built a tool" notice.
+- Right-hand panel grows with `github_search_repos` (kind: generated).
+- Re-asking gives a real list of repos.
+
+### Test 4 — Direct vault interaction
+
+```bash
+# What's stored for a tool? (keys only, values never returned)
+curl -s http://localhost:8765/vault/keys/openapi__github_search_repos | jq
+
+# Set a secret directly
+curl -s -X POST http://localhost:8765/vault/secret \
+  -H 'Content-Type: application/json' \
+  -d '{"tool_id":"openapi__openweather_current","secret_key":"openweather_api_key","value":"YOUR_KEY"}'
+
+# Now ask "What's the current weather in Tokyo via OpenWeather?"
+# Toolsmith should pick openweather (it's in the spec index now), find the
+# key, build + probe + register the tool.
+```
+
+### Test 5 — Code execution sandbox
+
+```bash
+# Try to manually inject a hostile artifact and confirm the import allowlist blocks it.
+docker exec cuga-apps-cos-toolsmith mkdir -p /app/chief_of_staff/data/tools/manual__danger
+docker exec cuga-apps-cos-toolsmith bash -c 'cat > /app/chief_of_staff/data/tools/manual__danger/manifest.yaml << EOF
+id: manual__danger
+name: danger
+description: hostile import
+parameters_schema: {}
+entry_point: tool.py
+requires_secrets: []
+provenance: {source: openapi}
+version: 1
+EOF'
+docker exec cuga-apps-cos-toolsmith bash -c 'cat > /app/chief_of_staff/data/tools/manual__danger/tool.py << EOF
+import subprocess
+async def danger():
+    return subprocess.check_output(["id"]).decode()
+EOF'
+# Force a backend resync. Adapter reload should NOT crash; instead the
+# tool should be registered as an error stub that raises on call.
+curl -s -X POST http://localhost:8765/internal/artifacts_changed | jq
+docker logs cuga-apps-cos-adapter --tail 20 | grep "rejected"
+# → "Artifact 'manual__danger' rejected: disallowed import: 'subprocess'"
+
+# Confirm the tool exists in the agent but errors when invoked.
+# Asking the chat to use 'danger' will surface the "disabled" error.
+```
+
+### Test 6 — Vault keyring backend (optional)
+
+By default the vault uses SQLite + base64-XOR (clearly documented as
+not-real-encryption). To switch to OS keyring:
+
+```bash
+# Linux containers usually don't have a working keyring backend; this is
+# more meaningful when running the toolsmith service outside Docker.
+TOOLSMITH_CMD="VAULT_BACKEND=keyring uvicorn chief_of_staff.toolsmith.server:app --port 8001"
+# Then: curl -s http://localhost:8001/health | jq '.coder, .artifact_count'
+# Backend reports the active backend in /vault/keys/<id> response.
+```
+
+### What "phase 3.6 passing" means
+
+You've proven:
+1. **Real code exec.** Coder-generated Python actually runs in the adapter.
+2. **Auth UX.** Tools that need credentials surface a prompt; user provides; tool gets built.
+3. **Sandboxing.** Hostile imports are caught before they execute.
+4. **Vault separation.** Secrets travel from vault → adapter → tool, never to the UI or logs.
+5. **Persistence still works.** Auth-aware artifacts survive restart; their secrets stay in the vault.
+
+You can now wire any documented authenticated REST API into Toolsmith
+just by adding it to spec_index.yaml — Stripe, Linear, Notion, Slack
+webhooks, whatever fits the three supported auth schemes.
+
+## Roadmap (phases 3.7+)
 
 | Phase | Adds | Why |
 |---|---|---|
-| **3.6** | Auth UX — credential prompt modal in UI + OS keyring in vault; auth-required APIs (Stripe, GitHub, Notion) | Unlocks the authenticated-API economy |
-| **3.7** | Web search + dynamic spec discovery — Toolsmith finds OpenAPI specs it doesn't already know about | Removes the curated-index ceiling |
-| **3.8** | Code-revision loop — when probe fails, Coder is asked to revise based on the failure; up to N retries | Quality bump; closes the gap on flaky generation |
-| **4** | Browser-task source — sites with no API; Toolsmith drives cuga's web-agent side | DoorDash / consumer-app class of problems |
+| **3.7** | OAuth2 redirect flow + dynamic spec discovery (Smithery / openapi-directory search) | Unlocks Google / Microsoft / Slack / GitHub user-scoped APIs (calendar, drive, gmail, etc.) |
+| **3.8** | Code-revision loop — failed probe → Coder is asked to revise based on the failure; up to N retries | Quality bump; closes the gap on flaky generation |
+| **4** | Browser-task source — sites with no API at all; Toolsmith drives cuga's web-agent side | DoorDash / consumer-app class of problems |
 | **4.5** | Tool composition — Toolsmith builds tools that compose existing tools. *"Ride summary"* = Uber API + receipt parser + categorizer. | Multi-step workflows |
 | **5** | Health checks + auto-quarantine + auto-regenerate-from-provenance | Self-maintaining toolbox |
 | **6** | Cross-domain mining over the unified data layer | Genuinely novel demos that siloed apps can't ship |
 
-Next stop is **3.6 (auth UX)** — the biggest single jump in usefulness because most APIs worth wrapping are authenticated.
+Phase 3.6 unlocked **bearer / api-key / query-param auth** — most documented REST APIs. Phase 3.7's OAuth2 flow is the next big jump because that's what every consumer-grade API uses.
 
 ## Run without Docker
 

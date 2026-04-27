@@ -53,12 +53,18 @@ class AgentClient(Protocol):
     ) -> AgentResult:
         ...
 
-    async def reload(self, servers: list[str], extra_tools: list[dict] | None = None) -> dict:
-        """Tell the agent to rebuild itself with a new tool set. Used by
-        the orchestrator after an acquisition is approved.
+    async def reload(
+        self,
+        servers: list[str],
+        extra_tools: list[dict] | None = None,
+        secrets: dict[str, dict[str, str]] | None = None,
+    ) -> dict:
+        """Tell the agent to rebuild itself with a new tool set + per-tool
+        secrets. Used by the orchestrator after an acquisition or vault change.
 
-        extra_tools is the phase-3 generated-tool spec list; concrete
-        adapters that don't support generated tools may ignore it.
+        extra_tools = generated tool specs (phase 3.5+).
+        secrets   = {artifact_id: {key: value}} for tools whose code requires
+                    auth values at call time (phase 3.6).
         """
         ...
 
