@@ -27,6 +27,11 @@ services:
       MCP_SERVERS: "web,local,code"
       CUGA_IN_DOCKER: "1"
       BROWSER_RUNNER_URL: "http://chief-of-staff-browser:8002"
+      # Bumped from default 4096 — the post-acquisition retry path was
+      # producing empty responses because the second turn's prompt
+      # (containing more conversation context) crowded out generation
+      # tokens when capped at 4k.
+      COS_LLM_MAX_TOKENS: "8192"
     ports:
       - "8000:8000"
     networks:

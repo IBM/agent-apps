@@ -28,13 +28,10 @@ import asyncio
 import json
 import logging
 import os
-import smtplib
 import sqlite3
 import sys
 import uuid
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -73,16 +70,6 @@ def _load_store() -> dict:
 
 def _save_store(data: dict) -> None:
     _STORE_PATH.write_text(json.dumps(data, indent=2))
-
-
-def _get_email_cfg() -> dict:
-    s = _load_store().get("email", {})
-    return {
-        "host":     s.get("host")     or os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "user":     s.get("user")     or os.getenv("SMTP_USERNAME", ""),
-        "password": s.get("password") or os.getenv("SMTP_PASSWORD", ""),
-        "to":       s.get("to")       or os.getenv("RESEARCH_TO", ""),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -203,31 +190,6 @@ def make_agent():
 
 
 # ---------------------------------------------------------------------------
-# Email
-# ---------------------------------------------------------------------------
-
-def _send_email(subject: str, body: str) -> bool:
-    cfg = _get_email_cfg()
-    if not (cfg["to"] and cfg["user"] and cfg["password"]):
-        log.info("[EMAIL — not configured] %s", subject)
-        return False
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = cfg["user"]
-        msg["To"]      = cfg["to"]
-        msg.attach(MIMEText(body, "plain"))
-        with smtplib.SMTP_SSL(cfg.get("host", "smtp.gmail.com"), 465) as smtp:
-            smtp.login(cfg["user"], cfg["password"])
-            smtp.send_message(msg)
-        log.info("Research email sent → %s", cfg["to"])
-        return True
-    except Exception as exc:
-        log.error("Email failed: %s", exc)
-        return False
-
-
-# ---------------------------------------------------------------------------
 # Background scheduler — runs scheduled research topics
 # ---------------------------------------------------------------------------
 
@@ -247,7 +209,6 @@ async def _research_scheduler(agent) -> None:
                 continue
             schedule  = topic.get("schedule", "daily")
             last_run  = topic.get("last_run")
-            email_res = topic.get("email_results", False)
 
             due = False
             if last_run is None:
@@ -272,11 +233,7 @@ async def _research_scheduler(agent) -> None:
                     thread_id=f"sched-{topic['id']}",
                 )
                 report = result.answer
-                emailed = False
-                if email_res:
-                    subject = f"🔬 Research: {topic['query'][:60]}"
-                    emailed = _send_email(subject, report)
-                _save_report(topic["query"], report, source="scheduled", emailed=emailed)
+                _save_report(topic["query"], report, source="scheduled", emailed=False)
                 topic["last_run"] = now.isoformat()
                 log.info("Scheduled research complete: %s", topic["query"])
             except Exception as exc:
@@ -296,21 +253,15 @@ from pydantic import BaseModel  # noqa: E402
 
 class AskReq(BaseModel):
     question: str
-    email_result: bool = False
 
 
-class EmailConfigReq(BaseModel):
-    host: str = "smtp.gmail.com"
-    user: str = ""
-    password: str = ""
-    to: str = ""
+class CredsReq(BaseModel):
     tavily_key: str = ""
 
 
 class TopicAddReq(BaseModel):
     query: str
     schedule: str = "daily"   # hourly | daily | weekly
-    email_results: bool = False
 
 
 class TopicDeleteReq(BaseModel):
@@ -356,11 +307,8 @@ def _web(port: int) -> None:
                 thread_id="chat",
             )
             report = result.answer
-            emailed = False
-            if req.email_result:
-                emailed = _send_email(f"🔬 Research: {req.question[:60]}", report)
-            _save_report(req.question, report, source="chat", emailed=emailed)
-            return {"answer": report, "emailed": emailed}
+            _save_report(req.question, report, source="chat", emailed=False)
+            return {"answer": report}
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
 
@@ -377,12 +325,11 @@ def _web(port: int) -> None:
         data   = _load_store()
         topics = data.get("topics", [])
         topics.append({
-            "id":            uuid.uuid4().hex[:8],
-            "query":         req.query,
-            "schedule":      req.schedule,
-            "email_results": req.email_results,
-            "enabled":       True,
-            "last_run":      None,
+            "id":       uuid.uuid4().hex[:8],
+            "query":    req.query,
+            "schedule": req.schedule,
+            "enabled":  True,
+            "last_run": None,
         })
         data["topics"] = topics
         _save_store(data)
@@ -416,11 +363,8 @@ def _web(port: int) -> None:
                 f"Research this topic and produce a detailed structured report:\n\n{topic['query']}",
                 thread_id=f"run-{topic['id']}",
             )
-            report  = result.answer
-            emailed = False
-            if topic.get("email_results"):
-                emailed = _send_email(f"🔬 Research: {topic['query'][:60]}", report)
-            entry = _save_report(topic["query"], report, source="manual", emailed=emailed)
+            report = result.answer
+            entry  = _save_report(topic["query"], report, source="manual", emailed=False)
             topic["last_run"] = datetime.now(timezone.utc).isoformat()
             _save_store(data)
             return {"ok": True, "entry": entry}
@@ -432,14 +376,8 @@ def _web(port: int) -> None:
         return _load_store()
 
     @app.post("/settings/credentials")
-    async def api_creds(req: EmailConfigReq):
+    async def api_creds(req: CredsReq):
         data = _load_store()
-        data["email"] = {
-            "host":     req.host,
-            "user":     req.user,
-            "password": req.password,
-            "to":       req.to,
-        }
         if req.tavily_key:
             os.environ["TAVILY_API_KEY"] = req.tavily_key
             data["tavily_key"] = req.tavily_key
@@ -545,8 +483,6 @@ _HTML = """<!DOCTYPE html>
   .src-chat{background:#1e3a5f;color:#60a5fa}
   .src-scheduled{background:#0d3330;color:#5eead4}
   .src-manual{background:#2e1065;color:#c4b5fd}
-  .emailed-badge{font-size:10px;background:#052e16;color:#4ade80;
-    padding:1px 6px;border-radius:8px}
   .report-body{padding:10px 14px;font-size:12px;line-height:1.6;color:#d1d5db;
     white-space:pre-wrap;border-top:1px solid #2d2d4a;background:#0f1117;display:none}
   .report-body.open{display:block}
@@ -578,14 +514,6 @@ _HTML = """<!DOCTYPE html>
         </div>
         <div class="srow"><label>Tavily key</label>
           <input type="password" id="tavily-key" placeholder="tvly-…"></div>
-        <div class="srow"><label>SMTP host</label>
-          <input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
-        <div class="srow"><label>Username</label>
-          <input type="email" id="smtp-user" placeholder="you@gmail.com"></div>
-        <div class="srow"><label>Password</label>
-          <input type="password" id="smtp-pass" placeholder="app password"></div>
-        <div class="srow"><label>Research to</label>
-          <input type="email" id="smtp-to" placeholder="recipient@example.com"></div>
         <button class="btn btn-sm" onclick="saveCreds()">Save</button>
         <span class="save-ok" id="creds-ok">✓ Saved</span>
       </div>
@@ -608,10 +536,6 @@ _HTML = """<!DOCTYPE html>
               <option value="daily" selected>Daily</option>
               <option value="weekly">Weekly</option>
             </select>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-            <input type="checkbox" id="new-email">
-            <label for="new-email" style="font-size:12px;color:#9ca3af">Email results</label>
           </div>
           <button class="btn btn-sm" onclick="addTopic()">+ Add topic</button>
         </div>
@@ -644,10 +568,6 @@ _HTML = """<!DOCTYPE html>
             placeholder="Type a research topic or question…"
             onkeydown="if(event.key==='Enter')ask()">
           <button class="chat-send" id="chat-send" onclick="ask()">Research</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
-          <input type="checkbox" id="email-result">
-          <label for="email-result" style="font-size:12px;color:#6b7280">Email this result</label>
         </div>
         <div class="chat-result" id="chat-result"></div>
       </div>
@@ -691,26 +611,16 @@ function checkApiKey() {
 async function loadSettings() {
   try {
     const s = await fetch('/settings').then(r => r.json());
-    const e = s.email || {};
-    document.getElementById('smtp-host').value  = e.host     || '';
-    document.getElementById('smtp-user').value  = e.user     || '';
-    document.getElementById('smtp-pass').value  = e.password ? '••••••••' : '';
-    document.getElementById('smtp-to').value    = e.to       || '';
     if (s.tavily_key) document.getElementById('tavily-key').value = '••••••••••••••••';
     checkApiKey();
   } catch(e) {}
 }
 
 async function saveCreds() {
-  const pass    = document.getElementById('smtp-pass').value;
-  const tKey    = document.getElementById('tavily-key').value;
+  const tKey = document.getElementById('tavily-key').value;
   await fetch('/settings/credentials', { method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      host:       document.getElementById('smtp-host').value,
-      user:       document.getElementById('smtp-user').value,
-      password:   pass === '••••••••' ? '' : pass,
-      to:         document.getElementById('smtp-to').value,
       tavily_key: (tKey.includes('•') ? '' : tKey),
     }) });
   flash('creds-ok');
@@ -737,7 +647,6 @@ function renderTopics(topics) {
         <div class="topic-query">${esc(t.query)}</div>
         <div class="topic-meta">
           <span class="sched-pill">${t.schedule}</span>
-          ${t.email_results ? ' · 📧 email' : ''}
           ${t.last_run ? ' · last: ' + new Date(t.last_run).toLocaleDateString() : ' · never run'}
         </div>
       </div>
@@ -756,9 +665,8 @@ async function addTopic() {
   await fetch('/topics/add', { method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      query:         q,
-      schedule:      document.getElementById('new-schedule').value,
-      email_results: document.getElementById('new-email').checked,
+      query:    q,
+      schedule: document.getElementById('new-schedule').value,
     }) });
   document.getElementById('new-topic').value = '';
   await loadTopics();
@@ -804,10 +712,7 @@ async function ask(question) {
   try {
     const r = await fetch('/ask', { method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        question: q,
-        email_result: document.getElementById('email-result').checked,
-      }) });
+      body: JSON.stringify({ question: q }) });
     const d = await r.json();
     res.textContent = d.answer || d.error || '(no response)';
     await loadReports();
@@ -834,7 +739,6 @@ function renderReports(reports) {
       <div class="report-header" onclick="toggleReport('rb-${i}','ri-${i}')">
         <span class="report-topic">${esc(r.topic)}</span>
         <span class="report-src src-${r.source}">${r.source}</span>
-        ${r.emailed ? '<span class="emailed-badge">✉️</span>' : ''}
         <span class="report-time">${new Date(r.created_at).toLocaleString()}</span>
         <span id="ri-${i}" style="font-size:11px;color:#4b5563;margin-left:4px">▸</span>
       </div>

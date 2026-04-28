@@ -1,16 +1,14 @@
 """
-Drop Summarizer — folder-watcher + web UI
+Drop Summarizer — upload-driven summarizer with web UI
 ==========================================
 
-Drop any .txt, .md, .pdf, or image file into the inbox folder.
-The background watcher detects it, summarizes/analyzes it with the agent,
-and the result appears instantly in the browser.
+Upload a .txt, .md, .pdf, or image file via the browser. The server extracts
+the content, sends it to the agent, and the resulting summary appears in the
+in-page feed. There is no folder watcher and no email path — every summary
+is the result of an active upload from the browser.
 
 Supports: .txt, .md, .pdf, .png, .jpg, .jpeg, .tiff, .bmp, .gif
 Images and PDFs are processed via docling for rich content extraction.
-
-Optional email alerts: configure keywords — if a summary contains them, an
-email is sent to your configured address.
 
 Run:
     python main.py
@@ -22,12 +20,6 @@ Then open: http://127.0.0.1:28794
 Environment variables:
     LLM_PROVIDER     rits | anthropic | openai | ollama | watsonx | litellm
     LLM_MODEL        model override
-    WATCH_DIR        folder to watch (default: ./inbox)
-    POLL_SECONDS     polling interval (default: 15)
-    SMTP_HOST        SMTP server (default: smtp.gmail.com)
-    SMTP_USERNAME    sender email
-    SMTP_PASSWORD    app password
-    ALERT_TO         recipient email for alerts
 
 Required for images/PDFs:
     pip install docling
@@ -35,17 +27,12 @@ Required for images/PDFs:
 
 import argparse
 import asyncio
-import json
 import logging
 import os
-import shutil
-import smtplib
 import sqlite3
 import sys
 import uuid
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile
@@ -72,46 +59,12 @@ PDF_EXTENSIONS   = {".pdf"}
 SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | PDF_EXTENSIONS
 
 # ---------------------------------------------------------------------------
-# Persistent store — .store.json
+# Upload staging area — files written here transiently while we extract +
+# summarize them in a background task. No persistent watching, no email.
 # ---------------------------------------------------------------------------
 
-_STORE_PATH = _DIR / ".store.json"
-_DEFAULT_STORE = {
-    "poll_seconds": int(os.getenv("POLL_SECONDS", "15")),
-    "watch_dir": os.getenv("WATCH_DIR", str(_DIR / "inbox")),
-    "alert_keywords": [],
-    "email": {
-        "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "user": os.getenv("SMTP_USERNAME", ""),
-        "password": os.getenv("SMTP_PASSWORD", ""),
-        "to": os.getenv("ALERT_TO", ""),
-    },
-}
-
-
-def _load_store() -> dict:
-    try:
-        if _STORE_PATH.exists():
-            return json.loads(_STORE_PATH.read_text())
-    except Exception as exc:
-        log.warning("Store read error: %s", exc)
-    return {}
-
-
-def _get_store() -> dict:
-    stored = _load_store()
-    result = dict(_DEFAULT_STORE)
-    result.update({k: v for k, v in stored.items() if v})
-    if "email" in stored:
-        result["email"] = {**_DEFAULT_STORE["email"], **stored["email"]}
-    return result
-
-
-def _save_store(data: dict) -> None:
-    try:
-        _STORE_PATH.write_text(json.dumps(data, indent=2))
-    except Exception as exc:
-        log.warning("Store write error: %s", exc)
+_UPLOADS_DIR = _DIR / "uploads"
+_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -262,100 +215,38 @@ def make_agent():
 
 
 # ---------------------------------------------------------------------------
-# Email
+# Per-upload processor — runs as a background asyncio task per file.
+# No folder watching, no scheduled polling: every summary is the result of an
+# active /upload from the browser.
 # ---------------------------------------------------------------------------
 
-def _send_email(subject: str, body: str) -> bool:
-    cfg = _get_store().get("email", {})
-    if not (cfg.get("to") and cfg.get("user") and cfg.get("password")):
-        log.info("[EMAIL — not configured] %s", subject)
-        return False
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = cfg["user"]
-        msg["To"]      = cfg["to"]
-        msg.attach(MIMEText(body, "plain"))
-        with smtplib.SMTP_SSL(cfg.get("host", "smtp.gmail.com"), 465) as smtp:
-            smtp.login(cfg["user"], cfg["password"])
-            smtp.send_message(msg)
-        log.info("Email sent → %s", cfg["to"])
-        return True
-    except Exception as exc:
-        log.error("Email failed: %s", exc)
-        return False
-
-
-
-# ---------------------------------------------------------------------------
-# Background watcher loop
-# ---------------------------------------------------------------------------
-
-_watcher_status = {"running": False, "last_check": None, "processed": 0}
 _pending_files: set[str] = set()  # filenames currently being processed
 
 
-async def _watcher_loop(agent) -> None:
-    _watcher_status["running"] = True
-    while True:
-        cfg        = _get_store()
-        interval   = cfg.get("poll_seconds", 15)
-        watch_path = Path(cfg.get("watch_dir", str(_DIR / "inbox")))
-        keywords   = [kw.lower().strip() for kw in cfg.get("alert_keywords", []) if kw.strip()]
-
-        _watcher_status["last_check"] = datetime.now(timezone.utc).isoformat()
-
-        if watch_path.exists():
-            processed_dir = watch_path / "processed"
-            processed_dir.mkdir(parents=True, exist_ok=True)
-
-            files = [
-                f for f in watch_path.iterdir()
-                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-            ]
-
-            for file_path in files:
-                dest = processed_dir / file_path.name
-                try:
-                    shutil.move(str(file_path), str(dest))
-                except Exception as exc:
-                    log.warning("Could not move %s: %s", file_path.name, exc)
-                    continue
-
-                _pending_files.add(file_path.name)
-                log.info("Processing: %s", file_path.name)
-                try:
-                    # 1. Extract content in a thread (docling can be slow).
-                    stored_content = await asyncio.get_event_loop().run_in_executor(
-                        None, _extract, dest
-                    )
-
-                    # 2. Pass content directly to the agent — no tool calling needed.
-                    result = await agent.invoke(
-                        f"File: {file_path.name}\n\nContent:\n{stored_content[:15000]}\n\nSummarize this document.",
-                        thread_id=f"sum-{file_path.stem}",
-                    )
-                    summary = result.answer
-
-                    # 3. Keyword alert check
-                    alerted = False
-                    if keywords and any(kw in summary.lower() for kw in keywords):
-                        matched = [kw for kw in keywords if kw in summary.lower()]
-                        subject = f"📄 Drop Alert: {file_path.name} — keywords: {', '.join(matched)}"
-                        alerted = _send_email(subject, f"File: {file_path.name}\n\nSummary:\n{summary}")
-
-                    # 4. Persist summary and content
-                    _save_summary(file_path.name, summary, content=stored_content, alerted=alerted)
-                    _watcher_status["processed"] += 1
-                    log.info("Done: %s", file_path.name)
-
-                except Exception as exc:
-                    log.error("Error processing %s: %s", file_path.name, exc)
-                    _save_summary(file_path.name, f"Error: {exc}", content="", alerted=False)
-                finally:
-                    _pending_files.discard(file_path.name)
-
-        await asyncio.sleep(interval)
+async def _process_file(agent, path: Path, original_name: str) -> None:
+    """Extract content, summarize, persist. One asyncio task per upload."""
+    _pending_files.add(original_name)
+    log.info("Processing: %s", original_name)
+    try:
+        stored_content = await asyncio.get_event_loop().run_in_executor(
+            None, _extract, path
+        )
+        result = await agent.invoke(
+            f"File: {original_name}\n\nContent:\n{stored_content[:15000]}\n\nSummarize this document.",
+            thread_id=f"sum-{path.stem}-{uuid.uuid4().hex[:6]}",
+        )
+        _save_summary(original_name, result.answer,
+                      content=stored_content, alerted=False)
+        log.info("Done: %s", original_name)
+    except Exception as exc:
+        log.error("Error processing %s: %s", original_name, exc)
+        _save_summary(original_name, f"Error: {exc}", content="", alerted=False)
+    finally:
+        _pending_files.discard(original_name)
+        try:
+            path.unlink(missing_ok=True)   # clean up the staging file
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -368,22 +259,6 @@ from pydantic import BaseModel  # noqa: E402
 class AskReq(BaseModel):
     question: str
     filename: str | None = None
-
-
-class EmailConfigReq(BaseModel):
-    host: str = "smtp.gmail.com"
-    user: str = ""
-    password: str = ""
-    to: str = ""
-
-
-class KeywordsReq(BaseModel):
-    keywords: list[str] = []
-
-
-class PollReq(BaseModel):
-    poll_seconds: int = 15
-    watch_dir: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -400,14 +275,6 @@ def _web(port: int) -> None:
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_methods=["*"], allow_headers=["*"])
 
-    @app.on_event("startup")
-    async def _startup():
-        # Create inbox
-        watch_dir = Path(_get_store().get("watch_dir", str(_DIR / "inbox")))
-        watch_dir.mkdir(parents=True, exist_ok=True)
-        asyncio.create_task(_watcher_loop(agent))
-        log.info("Watcher started — watching %s", watch_dir)
-
     # ── Summaries ──────────────────────────────────────────────────────────
     @app.get("/summaries")
     async def api_summaries():
@@ -416,13 +283,20 @@ def _web(port: int) -> None:
     # ── Upload file directly ───────────────────────────────────────────────
     @app.post("/upload")
     async def api_upload(file: UploadFile = File(...)):
-        store     = _get_store()
-        watch_dir = Path(store.get("watch_dir", str(_DIR / "inbox")))
-        watch_dir.mkdir(parents=True, exist_ok=True)
-        dest = watch_dir / file.filename
-        content = await file.read()
-        dest.write_bytes(content)
-        return {"ok": True, "filename": file.filename, "message": "File queued for summarization."}
+        # Stage in uploads/ with a uuid prefix so concurrent uploads with the
+        # same filename don't collide; original filename is what the user sees.
+        safe_name  = Path(file.filename).name or "upload"
+        if Path(safe_name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return JSONResponse(
+                {"error": f"Unsupported file type. Allowed: {sorted(SUPPORTED_EXTENSIONS)}"},
+                status_code=400,
+            )
+        staging   = _UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}-{safe_name}"
+        content   = await file.read()
+        staging.write_bytes(content)
+        asyncio.create_task(_process_file(agent, staging, safe_name))
+        return {"ok": True, "filename": safe_name,
+                "message": "File queued for summarization."}
 
     # ── Chat (ask over files) ──────────────────────────────────────────────
     @app.get("/files/pending")
@@ -471,40 +345,6 @@ def _web(port: int) -> None:
             return {"answer": result.answer}
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
-
-    # ── Settings ───────────────────────────────────────────────────────────
-    @app.get("/settings")
-    async def api_get_settings():
-        return _get_store()
-
-    @app.post("/settings/email")
-    async def api_email(req: EmailConfigReq):
-        data = _load_store()
-        data["email"] = req.model_dump()
-        _save_store(data)
-        return {"ok": True}
-
-    @app.post("/settings/keywords")
-    async def api_keywords(req: KeywordsReq):
-        data = _load_store()
-        data["alert_keywords"] = req.keywords
-        _save_store(data)
-        return {"ok": True}
-
-    @app.post("/settings/poll")
-    async def api_poll(req: PollReq):
-        data = _load_store()
-        data["poll_seconds"] = req.poll_seconds
-        if req.watch_dir:
-            data["watch_dir"] = req.watch_dir
-            Path(req.watch_dir).mkdir(parents=True, exist_ok=True)
-        _save_store(data)
-        return {"ok": True}
-
-    # ── Watcher status ─────────────────────────────────────────────────────
-    @app.get("/watcher/status")
-    async def api_watcher_status():
-        return _watcher_status
 
     # ── HTML ───────────────────────────────────────────────────────────────
     @app.get("/", response_class=HTMLResponse)
@@ -633,7 +473,6 @@ _HTML = """<!DOCTYPE html>
 
 <header>
   <h1>📄 Drop Summarizer</h1>
-  <span class="badge badge-green" id="watcher-badge">Watching</span>
   <div class="spacer"></div>
   <span class="hdr-stat" id="hdr-stat">—</span>
 </header>
@@ -710,7 +549,7 @@ _HTML = """<!DOCTYPE html>
         <button class="btn btn-sm btn-ghost" style="margin-left:8px" onclick="loadSummaries()">↺ Refresh</button>
       </div>
       <div class="card-body" id="feed-body">
-        <div class="empty-state">No summaries yet — drop a file into the inbox folder or upload one above.</div>
+        <div class="empty-state">No summaries yet — upload a file above.</div>
       </div>
     </div>
 
@@ -747,18 +586,6 @@ function clearActiveFile() {
 async function init() {
   await loadSummaries();
   setInterval(loadSummaries, 10000);
-  setInterval(loadWatcherStatus, 8000);
-}
-
-async function loadWatcherStatus() {
-  try {
-    const s = await fetch('/watcher/status').then(r => r.json());
-    const badge = document.getElementById('watcher-badge');
-    badge.className = 'badge ' + (s.running ? 'badge-green' : 'badge-gray');
-    badge.textContent = s.running ? 'Watching' : 'Stopped';
-    document.getElementById('hdr-stat').textContent =
-      `${s.processed} files processed · last check ${s.last_check ? new Date(s.last_check).toLocaleTimeString() : '—'}`;
-  } catch(e) {}
 }
 
 // ── Upload ──────────────────────────────────────────────────────────
@@ -836,7 +663,6 @@ function renderFeed(entries) {
     <div class="sum-entry" data-filename="${esc(e.filename)}" data-id="${e.id}">
       <div class="sum-header">
         <span class="sum-filename" style="cursor:pointer" onclick="setActiveFile('${esc(e.filename)}','${e.id}')" title="Focus chat on this file">${esc(e.filename)}</span>
-        ${e.alerted ? '<span class="sum-alert-badge">📧 alerted</span>' : ''}
         <span class="sum-wc">${e.word_count}w</span>
         <span class="sum-time">${fmtTime(e.created_at)}</span>
         <button class="btn btn-sm" style="background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;padding:2px 8px;font-size:10px;border-radius:5px;margin-left:6px" onclick="setActiveFile('${esc(e.filename)}','${e.id}')">Focus</button>

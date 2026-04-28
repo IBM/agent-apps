@@ -26,11 +26,8 @@ import asyncio
 import json
 import logging
 import os
-import smtplib
 import sys
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -71,40 +68,6 @@ def _save_store(data: dict) -> None:
     _STORE_PATH.write_text(json.dumps(data, indent=2))
 
 
-def _get_email_cfg() -> dict:
-    s = _load_store().get("email", {})
-    return {
-        "host":     s.get("host")     or os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "user":     s.get("user")     or os.getenv("SMTP_USERNAME", ""),
-        "password": s.get("password") or os.getenv("SMTP_PASSWORD", ""),
-        "to":       s.get("to")       or os.getenv("DIGEST_TO", ""),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Email
-# ---------------------------------------------------------------------------
-
-def _send_reminder_email(subject: str, body_html: str, to: str | None = None) -> bool:
-    cfg = _get_email_cfg()
-    recipient = to or cfg["to"]
-    if not (recipient and cfg["user"] and cfg["password"]):
-        log.info("[EMAIL — not configured] %s", subject)
-        return False
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = cfg["user"]
-        msg["To"]      = recipient
-        msg.attach(MIMEText(body_html, "html"))
-        with smtplib.SMTP_SSL(cfg.get("host", "smtp.gmail.com"), 465) as smtp:
-            smtp.login(cfg["user"], cfg["password"])
-            smtp.send_message(msg)
-        log.info("Reminder email sent → %s", recipient)
-        return True
-    except Exception as exc:
-        log.error("Email failed: %s", exc)
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +208,9 @@ _fired_log: list[dict] = []  # in-memory, capped at 100
 
 
 async def _reminder_watcher(agent) -> None:
-    """Poll SQLite every 60s for due reminders; fire email when due."""
+    """Poll SQLite every 60s for due reminders; append to the in-memory
+    `_fired_log` ring (UI surfaces it on the Fired Reminders panel via
+    GET /reminders/fired). No email — alerts are in-UI only."""
     from store import list_due, mark_done
 
     while True:
@@ -261,16 +226,12 @@ async def _reminder_watcher(agent) -> None:
                     thread_id=f"reminder-{item['id']}",
                 )
                 body_html = result.answer
-                subject   = f"⏰ Reminder: {item['content'][:60]}"
-                sent      = _send_reminder_email(subject, body_html, item.get("delivery_email"))
-                if not sent:
-                    log.info("Reminder fired (no email configured): %r", item["content"])
 
                 entry = {
                     "id":        item["id"],
                     "content":   item["content"],
                     "due_date":  item.get("due_date"),
-                    "sent":      sent,
+                    "body_html": body_html,
                     "fired_at":  datetime.now(timezone.utc).isoformat(),
                 }
                 _fired_log.insert(0, entry)
@@ -292,13 +253,6 @@ from pydantic import BaseModel  # noqa: E402
 
 class AskReq(BaseModel):
     question: str
-
-
-class EmailConfigReq(BaseModel):
-    host: str = "smtp.gmail.com"
-    user: str = ""
-    password: str = ""
-    to: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -345,17 +299,6 @@ def _web(port: int) -> None:
     @app.get("/reminders/fired")
     async def api_fired():
         return _fired_log
-
-    @app.get("/settings")
-    async def api_settings():
-        return _load_store()
-
-    @app.post("/settings/email")
-    async def api_email(req: EmailConfigReq):
-        data = _load_store()
-        data["email"] = req.model_dump()
-        _save_store(data)
-        return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
     async def ui():
@@ -506,33 +449,14 @@ _HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header"><h2>✉️ Email Reminders</h2></div>
-      <div class="card-body">
-        <div class="srow"><label>SMTP host</label>
-          <input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
-        <div class="srow"><label>Username</label>
-          <input type="email" id="smtp-user" placeholder="you@gmail.com"></div>
-        <div class="srow"><label>Password</label>
-          <input type="password" id="smtp-pass" placeholder="app password"></div>
-        <div class="srow"><label>Default to</label>
-          <input type="email" id="smtp-to" placeholder="recipient@example.com"></div>
-        <button class="btn btn-sm" onclick="saveEmail()">Save</button>
-        <span class="save-ok" id="email-ok">✓ Saved</span>
-        <p style="font-size:11px;color:#4b5563;margin-top:8px">
-          When a reminder fires and SMTP is configured, an email is sent automatically.
-        </p>
-      </div>
-    </div>
-
-    <!-- Fired reminders log -->
+    <!-- Fired reminders / Recent Alerts -->
     <div class="card">
       <div class="card-header">
-        <h2>🔔 Fired Reminders</h2>
+        <h2>🔔 Recent Alerts</h2>
         <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="loadFired()">↺</button>
       </div>
       <div class="card-body" id="fired-body">
-        <div class="empty-state">No reminders fired yet.</div>
+        <div class="empty-state">No reminders fired yet — alerts appear here when a reminder comes due.</div>
       </div>
     </div>
 
@@ -569,22 +493,10 @@ let _lastFiredCount = 0;
 
 // ── Init ────────────────────────────────────────────────────────────
 async function init() {
-  await loadSettings();
   await loadTodos();
   await loadFired();
   setInterval(loadTodos, 15000);
   setInterval(loadFired, 10000);
-}
-
-async function loadSettings() {
-  try {
-    const s = await fetch('/settings').then(r => r.json());
-    const e = s.email || {};
-    document.getElementById('smtp-host').value = e.host || '';
-    document.getElementById('smtp-user').value = e.user || '';
-    document.getElementById('smtp-pass').value = e.password ? '••••••••' : '';
-    document.getElementById('smtp-to').value   = e.to   || '';
-  } catch(e) {}
 }
 
 async function loadTodos() {
@@ -600,10 +512,6 @@ async function loadTodos() {
 async function loadFired() {
   try {
     const fired = await fetch('/reminders/fired').then(r => r.json());
-    if (fired.length > _lastFiredCount && _lastFiredCount > 0) {
-      const newest = fired[0];
-      alert('⏰ Reminder fired: ' + newest.content);
-    }
     _lastFiredCount = fired.length;
     renderFired(fired);
   } catch(e) {}
@@ -669,7 +577,6 @@ function renderFired(fired) {
   body.innerHTML = fired.map(f => `
     <div class="fired-item">
       <span class="fired-content">${esc(f.content)}</span>
-      ${f.sent ? '<span class="sent-badge">✉️ emailed</span>' : ''}
       <div class="fired-meta">Due: ${f.due_date || '—'} · Fired: ${new Date(f.fired_at).toLocaleString()}</div>
     </div>`).join('');
 }
@@ -694,22 +601,6 @@ async function ask(question) {
     await loadTodos();
   } catch(e) { res.textContent = 'Error: ' + e.message; }
   btn.disabled = false; btn.textContent = 'Send';
-}
-
-// ── Email save ────────────────────────────────────────────────────────
-async function saveEmail() {
-  const pass = document.getElementById('smtp-pass').value;
-  await fetch('/settings/email', { method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      host:     document.getElementById('smtp-host').value,
-      user:     document.getElementById('smtp-user').value,
-      password: pass === '••••••••' ? undefined : pass,
-      to:       document.getElementById('smtp-to').value,
-    }) });
-  const ok = document.getElementById('email-ok');
-  ok.style.display = 'inline';
-  setTimeout(() => ok.style.display = 'none', 2000);
 }
 
 function esc(s) {

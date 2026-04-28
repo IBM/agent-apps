@@ -114,9 +114,17 @@ class Orchestrator:
                 "needs_secrets": outcome.needs_secrets,
                 "already_existed": outcome.already_existed,
             }
+            should_retry = False
             if outcome.success:
+                # Toolsmith built and registered a new tool. Sync the
+                # planner so cuga's adapter sees it, then re-ask the user's
+                # original question against a fresh thread — the cuga
+                # response on the original turn was empty (cuga had just
+                # emitted the gap marker), so without retry the user sees
+                # only the green "tool built" card and no answer.
                 try:
                     await self.sync_planner_with_toolsmith()
+                    should_retry = True
                 except Exception:  # noqa: BLE001
                     log.exception("planner reload after acquire failed")
             elif outcome.already_existed:
@@ -125,14 +133,15 @@ class Orchestrator:
                 # tool wasn't visible to cuga in this turn (e.g. an extra
                 # silently failed to build, or cuga's selection didn't
                 # latch). Re-running the same prompt against a fresh thread
-                # lets cuga try again with the full toolset. One retry is
-                # the right ceiling — more would risk an infinite loop.
+                # lets cuga try again with the full toolset.
                 log.info("acquisition already_existed; retrying original message")
                 try:
-                    # Force a sync first in case the adapter view is stale.
                     await self.sync_planner_with_toolsmith()
                 except Exception:  # noqa: BLE001
                     log.exception("planner sync before retry failed")
+                should_retry = True
+
+            if should_retry:
                 retry_thread = f"{thread_id}-retry-{uuid.uuid4().hex[:8]}"
                 retry_result = await self._planner.plan_and_execute(
                     message, thread_id=retry_thread,

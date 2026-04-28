@@ -5,27 +5,35 @@ Stock Alert Agent — web UI powered by cuga++
 Starts a browser UI with two panels:
 
   Market Query  — ask any price question (BTC price, compare ETH/SOL, AAPL quote)
-  Price Watch   — configure a threshold alert; fires an email when crossed
+  Price Watch   — configure a threshold alert; fires a *browser notification*
+                  when crossed. Watches and alert history live in the user's
+                  own browser (localStorage); nothing is sent by email.
+
+Per-user isolation is structural at every layer:
+  - watches + alert history → browser localStorage (per browser-profile)
+  - Alpha Vantage API key   → browser localStorage (per browser-profile);
+    sent on each /ask and /check, forwarded to mcp-finance as a tool arg, and
+    scrubbed from the agent's reply before returning to the client. The server
+    NEVER persists the key.
+
+The server is stateless: every /ask and /check opens a fresh agent thread
+(uuid-suffixed) so concurrent users do not share conversation state.
 
 Run:
     python main.py
     python main.py --port 8080
     python main.py --provider anthropic
 
-Then open: http://127.0.0.1:18794
+Then open: http://127.0.0.1:28801
 
 Prerequisites:
     Crypto (no key needed — CoinGecko public API):
         No setup required.
 
-    Stocks (requires Alpha Vantage free API key):
-        export ALPHA_VANTAGE_API_KEY=your_key   # get at alphavantage.co
-
-    Email alerts (optional — falls back to server log if not set):
-        export SMTP_HOST=smtp.gmail.com
-        export SMTP_USERNAME=you@example.com
-        export SMTP_PASSWORD=your_app_password
-        export ALERT_TO=you@example.com
+    Stocks (per-user Alpha Vantage key):
+        Each user pastes their own free key from alphavantage.co into the UI.
+        The key is saved to the browser's localStorage and sent on every
+        request — never persisted on the server.
 
 Environment variables:
     LLM_PROVIDER    rits | anthropic | openai | ollama | watsonx | litellm
@@ -34,12 +42,10 @@ Environment variables:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
-import smtplib
 import sys
-from email.mime.text import MIMEText
+import uuid
 from pathlib import Path
 
 _DIR       = Path(__file__).parent
@@ -55,36 +61,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Persistent store — .store.json next to main.py
-# ---------------------------------------------------------------------------
-
-import json
-
-_STORE_PATH = _DIR / ".store.json"
-
-
-def _load_store() -> dict:
-    try:
-        return json.loads(_STORE_PATH.read_text()) if _STORE_PATH.exists() else {}
-    except Exception as exc:
-        log.warning("Could not read store: %s", exc)
-        return {}
-
-
-def _save_store(data: dict) -> None:
-    try:
-        _STORE_PATH.write_text(json.dumps(data, indent=2))
-    except Exception as exc:
-        log.warning("Could not write store: %s", exc)
-
-
-def _update_store(**fields) -> None:
-    data = _load_store()
-    data.update(fields)
-    _save_store(data)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +80,18 @@ You are a market monitoring assistant. You watch prices and surface alerts that 
 | `get_stock_quote` | Fetch current price and change for a stock ticker (AAPL, TSLA, NVDA, etc.) |
 
 Always call the appropriate tool before answering. Never guess a price.
+
+## API key handling — important
+
+If the user's request includes an `Alpha Vantage API key:` line, you MUST:
+- Pass it to `get_stock_quote` as the `api_key` parameter on every call.
+- NEVER include the key (or any substring of it) in your reply text. Treat it
+  as a secret. If you mention "your key" at all, refer to it abstractly.
+- If the user's request does NOT include a key and they're asking about a
+  stock, say "Stock quotes need an Alpha Vantage key — paste yours into the
+  Alpha Vantage field on the left." Do not try to fetch.
+
+For crypto questions, no key is required — `get_crypto_price` is keyless.
 
 ## Watch mode — threshold alerts
 
@@ -165,74 +153,6 @@ def make_agent():
 
 
 # ---------------------------------------------------------------------------
-# Email — in-memory config (UI-settable, falls back to env vars)
-# ---------------------------------------------------------------------------
-
-_email_config: dict = {}
-
-
-def _get_email_cfg() -> dict:
-    """Merge env vars (base) with UI-supplied config (override)."""
-    return {
-        "host":     _email_config.get("host")     or os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "user":     _email_config.get("user")     or os.getenv("SMTP_USERNAME", ""),
-        "password": _email_config.get("password") or os.getenv("SMTP_PASSWORD", ""),
-        "to":       _email_config.get("to")       or os.getenv("ALERT_TO", ""),
-    }
-
-
-def _send_alert(symbol: str, body: str) -> None:
-    cfg = _get_email_cfg()
-    if not (cfg["to"] and cfg["user"] and cfg["password"]):
-        log.info("[ALERT — email not configured] %s", body)
-        return
-
-    msg            = MIMEText(body)
-    msg["Subject"] = f"Stock Alert — {symbol}"
-    msg["From"]    = cfg["user"]
-    msg["To"]      = cfg["to"]
-
-    try:
-        with smtplib.SMTP_SSL(cfg["host"], 465) as smtp:
-            smtp.login(cfg["user"], cfg["password"])
-            smtp.send_message(msg)
-        log.info("Alert email sent → %s", cfg["to"])
-    except Exception as exc:
-        log.error("Failed to send alert email: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Watch loop
-# ---------------------------------------------------------------------------
-
-async def _watch_loop(
-    agent,
-    symbol: str,
-    threshold: float,
-    direction: str,
-    is_stock: bool,
-    interval_s: int = 300,
-) -> None:
-    asset = "stock" if is_stock else "crypto"
-    prompt = (
-        f"Check {symbol} ({asset}) price now.\n"
-        f"Alert threshold: ${threshold:,.2f} ({direction})."
-    )
-    while True:
-        try:
-            result = await agent.invoke(prompt, thread_id=f"watch-{symbol.lower()}")
-            answer = result.answer
-            log.info("[WATCH] %s", answer)
-            if "PRICE ALERT" in answer:
-                _send_alert(symbol, answer)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            log.error("Watch error: %s", exc)
-        await asyncio.sleep(interval_s)
-
-
-# ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
 
@@ -243,33 +163,15 @@ class AskReq(BaseModel):
     symbol: str
     question: str
     is_stock: bool = False
+    alpha_vantage_key: str | None = None   # forwarded to mcp-finance per call
 
 
-class WatchReq(BaseModel):
+class CheckReq(BaseModel):
     symbol: str
     threshold: float
     direction: str        # "above" | "below"
     is_stock: bool = False
-
-
-class EmailConfigReq(BaseModel):
-    host: str = "smtp.gmail.com"
-    user: str
-    password: str
-    to: str
-
-
-class ApiConfigReq(BaseModel):
-    alpha_vantage_key: str
-
-
-class WatchStopReq(BaseModel):
-    symbol: str
-
-
-class EmailSendReq(BaseModel):
-    subject: str
-    body: str
+    alpha_vantage_key: str | None = None   # forwarded to mcp-finance per call
 
 
 # ---------------------------------------------------------------------------
@@ -286,107 +188,75 @@ def _web(port: int) -> None:
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     _agent = make_agent()
-    _watches: dict[str, dict] = {}   # symbol → {"task": Task, "config": dict}
 
-    # -- restore persisted state on startup ----------------------------------
-    _stored = _load_store()
+    def _key_block(key: str | None) -> str:
+        """Render a single line for the agent prompt — only when present.
 
-    if _stored.get("email"):
-        global _email_config
-        _email_config = _stored["email"]
-        log.info("Restored email config → %s", _email_config.get("to"))
-
-    if _stored.get("alpha_vantage_key"):
-        os.environ["ALPHA_VANTAGE_API_KEY"] = _stored["alpha_vantage_key"]
-        log.info("Restored Alpha Vantage key")
-
-    def _start_watch(cfg: dict):
-        symbol = cfg["symbol"]
-        task   = asyncio.get_event_loop().create_task(
-            _watch_loop(_agent, symbol, cfg["threshold"], cfg["direction"], cfg["is_stock"])
+        We tell the agent both the key and the explicit instruction not to
+        echo it. The system prompt also forbids leaking; we still scrub
+        server-side as defense in depth.
+        """
+        if not key:
+            return ""
+        return (
+            f"Alpha Vantage API key: {key}\n"
+            f"(Use this as the api_key parameter on get_stock_quote calls. "
+            f"Do not include the key in your reply text.)\n"
         )
-        _watches[symbol] = {"task": task, "config": {**cfg, "email_to": _get_email_cfg()["to"] or "(not configured)"}}
 
-    def _persist_watches():
-        _update_store(watches=[w["config"] for w in _watches.values() if not w["task"].done()])
-
-    for cfg in _stored.get("watches", []):
-        _start_watch(cfg)
-        log.info("Restored watch: %s", cfg)
+    def _scrub(answer: str, key: str | None) -> str:
+        """Defensive: strip the key from the agent's reply if it leaked."""
+        if not key or not answer:
+            return answer
+        return answer.replace(key, "[redacted]")
 
     @app.post("/ask")
     async def ask(req: AskReq):
         symbol = req.symbol.strip().upper()
         asset  = "stock" if req.is_stock else "crypto"
-        prompt = f"Symbol: {symbol} ({asset})\nQuestion: {req.question}"
+        # Defense-in-depth: never silently fall back to the MCP server's env
+        # key for stock queries — keys are per-user by policy.
+        if req.is_stock and not req.alpha_vantage_key:
+            raise HTTPException(status_code=400,
+                detail="Stock quotes require a per-user Alpha Vantage key. "
+                       "Paste yours in the left panel.")
+        prompt = (
+            _key_block(req.alpha_vantage_key)
+            + f"Symbol: {symbol} ({asset})\nQuestion: {req.question}"
+        )
+        # Unique thread per call: many concurrent users querying the same symbol
+        # must not share an agent thread (their messages would interleave).
+        thread = f"query-{symbol.lower()}-{uuid.uuid4().hex[:8]}"
         try:
-            result = await _agent.invoke(prompt, thread_id=f"query-{symbol.lower()}")
-            return {"answer": result.answer}
+            result = await _agent.invoke(prompt, thread_id=thread)
+            return {"answer": _scrub(result.answer, req.alpha_vantage_key)}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
-    @app.post("/watch/start")
-    async def watch_start(req: WatchReq):
+    @app.post("/check")
+    async def check(req: CheckReq):
+        """One threshold check for a single symbol — the browser polls this."""
         symbol = req.symbol.strip().upper()
-        # cancel existing watch for this symbol if already running
-        if symbol in _watches and not _watches[symbol]["task"].done():
-            _watches[symbol]["task"].cancel()
-
-        cfg = {"symbol": symbol, "threshold": req.threshold,
-               "direction": req.direction, "is_stock": req.is_stock}
-        _start_watch(cfg)
-        _persist_watches()
-        log.info("Watch started: %s %s $%.2f", symbol, req.direction, req.threshold)
-        return {"status": "started", **_watches[symbol]["config"]}
-
-    @app.post("/watch/stop")
-    async def watch_stop(req: WatchStopReq):
-        symbol = req.symbol.strip().upper()
-        if symbol in _watches:
-            if not _watches[symbol]["task"].done():
-                _watches[symbol]["task"].cancel()
-            del _watches[symbol]
-        _persist_watches()
-        return {"status": "stopped", "symbol": symbol}
-
-    @app.get("/watch/status")
-    def watch_status():
-        # prune completed tasks
-        dead = [s for s, w in _watches.items() if w["task"].done()]
-        for s in dead:
-            del _watches[s]
-        return [w["config"] for w in _watches.values()]
-
-    @app.post("/api/config")
-    def api_config(req: ApiConfigReq):
-        if req.alpha_vantage_key:
-            os.environ["ALPHA_VANTAGE_API_KEY"] = req.alpha_vantage_key
-            _update_store(alpha_vantage_key=req.alpha_vantage_key)
-            log.info("Alpha Vantage key updated")
-        return {"status": "saved", "alpha_vantage": bool(req.alpha_vantage_key)}
-
-    @app.get("/api/status")
-    def api_status():
-        return {"alpha_vantage_configured": bool(os.getenv("ALPHA_VANTAGE_API_KEY"))}
-
-    @app.post("/email/send")
-    def email_send(req: EmailSendReq):
-        _send_alert(req.subject, req.body)
-        return {"status": "sent"}
-
-    @app.post("/email/config")
-    def email_config(req: EmailConfigReq):
-        global _email_config
-        _email_config = {"host": req.host, "user": req.user, "password": req.password, "to": req.to}
-        _update_store(email=_email_config)
-        log.info("Email config updated → %s via %s", req.to, req.host)
-        return {"status": "saved", "to": req.to, "host": req.host, "user": req.user}
-
-    @app.get("/email/status")
-    def email_status():
-        cfg = _get_email_cfg()
-        configured = bool(cfg["to"] and cfg["user"] and cfg["password"])
-        return {"configured": configured, "to": cfg["to"], "host": cfg["host"], "user": cfg["user"]}
+        asset  = "stock" if req.is_stock else "crypto"
+        if req.is_stock and not req.alpha_vantage_key:
+            raise HTTPException(status_code=400,
+                detail="Stock watches require a per-user Alpha Vantage key.")
+        prompt = (
+            _key_block(req.alpha_vantage_key)
+            + f"Check {symbol} ({asset}) price now.\n"
+            + f"Alert threshold: ${req.threshold:,.2f} ({req.direction})."
+        )
+        thread = f"check-{symbol.lower()}-{uuid.uuid4().hex[:8]}"
+        try:
+            result = await _agent.invoke(prompt, thread_id=thread)
+            answer = _scrub(result.answer, req.alpha_vantage_key)
+            triggered = "PRICE ALERT" in answer
+            log.info("[CHECK] %s %s $%.2f triggered=%s key=%s",
+                     symbol, req.direction, req.threshold, triggered,
+                     "yes" if req.alpha_vantage_key else "no")
+            return {"symbol": symbol, "triggered": triggered, "message": answer}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
 
     @app.get("/", response_class=HTMLResponse)
     def ui():
@@ -431,9 +301,14 @@ button{background:#6366f1;color:#fff;border:none;border-radius:7px;padding:8px 1
 button:hover{background:#4f52d9}button:disabled{opacity:.45;cursor:default}
 button.danger{background:#7f1d1d;color:#fca5a5;margin-top:0}
 button.danger:hover{background:#991b1b}
+button.ghost{background:#1e1e2e;border:1px solid #2e2e40;color:#94a3b8}
+button.ghost:hover{background:#262636;color:#e2e8f0}
 .status-row{display:flex;align-items:center;gap:7px;margin-top:10px;padding:8px 12px;background:#0f0f13;border:1px solid #1e1e2e;border-radius:7px;font-size:12px}
 .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.dot.on{background:#10b981;box-shadow:0 0 5px #10b981}.dot.off{background:#374151}
+.dot.on{background:#10b981;box-shadow:0 0 5px #10b981}
+.dot.off{background:#374151}
+.dot.warn{background:#f59e0b;box-shadow:0 0 5px #f59e0b}
+.dot.alert{background:#ef4444;box-shadow:0 0 5px #ef4444}
 .status-text{color:#6b6b7e;flex:1}.status-text strong{color:#e2e2e8}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .chip{background:#111827;border:1px solid #1e293b;border-radius:6px;padding:5px 10px;font-size:12px;color:#94a3b8;cursor:pointer;transition:background .1s}
@@ -442,6 +317,11 @@ button.danger:hover{background:#991b1b}
 .result.visible{display:block}
 .thinking{color:#6b6b7e;font-style:italic;font-size:13px}
 .spinner{display:inline-block;animation:spin .7s linear infinite}
+.alert-row{display:flex;flex-direction:column;gap:4px;padding:10px 12px;background:#111827;border:1px solid #1e293b;border-radius:7px;margin-bottom:6px;font-size:12px}
+.alert-row.fired{border-color:#7f1d1d;background:#1c1216}
+.alert-row .ts{font-size:10px;color:#6b6b7e}
+.alert-row .body{color:#e2e8f0;line-height:1.5;white-space:pre-wrap}
+.muted{font-size:11px;color:#4a4a60;margin-top:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .fadein{animation:fadein .2s ease}
@@ -450,7 +330,7 @@ button.danger:hover{background:#991b1b}
 <body>
 <header>
   <h1>Stock Alert</h1>
-  <p class="sub">Powered by <span>CugaAgent</span> · live market data</p>
+  <p class="sub">Powered by <span>CugaAgent</span> · live market data · browser-only alerts</p>
 </header>
 
 <div class="layout">
@@ -460,45 +340,31 @@ button.danger:hover{background:#991b1b}
 
     <div class="card">
 
-      <div class="section-label">API Keys</div>
+      <div class="section-label">Alpha Vantage Key <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#4a4a60">— per-user, stays in this browser</span></div>
       <div class="field">
-        <label>Alpha Vantage <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#4a4a60">— stocks</span></label>
         <input id="avKey" type="password" placeholder="get free key at alphavantage.co" />
       </div>
-      <button id="apiSaveBtn" onclick="saveApi()">Save key</button>
+      <button id="apiSaveBtn" onclick="saveApi()">Save in this browser</button>
       <div class="status-row">
         <span class="dot off" id="apiDot"></span>
-        <span class="status-text" id="apiLabel">Not configured</span>
+        <span class="status-text" id="apiLabel">Not set — paste your key</span>
       </div>
+      <div class="muted">Your key never leaves this browser's localStorage
+        except when sent on individual price requests, and is never persisted
+        on the server. Crypto works without a key. <a
+        href="https://www.alphavantage.co/support/#api-key"
+        target="_blank" style="color:#818cf8">Get a free key →</a></div>
 
-      <div class="section-label">Email Alerts</div>
-      <div class="field">
-        <label>SMTP Host</label>
-        <input id="eHost" type="text" placeholder="smtp.gmail.com" value="smtp.gmail.com" />
-      </div>
-      <div class="field">
-        <label>Username</label>
-        <input id="eUser" type="text" placeholder="you@example.com" />
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input id="ePassword" type="password" placeholder="app password" />
-      </div>
-      <div class="field">
-        <label>Send alerts to</label>
-        <input id="eTo" type="text" placeholder="recipient@example.com" />
-      </div>
-      <button id="emailSaveBtn" onclick="saveEmail()">Save email settings</button>
-      <div class="status-row">
-        <span class="dot off" id="emailDot"></span>
-        <span class="status-text" id="emailLabel">Not configured</span>
+      <div class="muted" style="margin-top:14px;padding-top:14px;border-top:1px solid #1e1e2e">
+        Watches and alert history live only in this browser. A different user
+        on a different browser sees their own watches.
       </div>
 
     </div>
 
   </div>
 
-  <!-- ══ Right panel — query + watch ══ -->
+  <!-- ══ Right panel — query + watch + alerts ══ -->
   <div>
 
     <!-- Market Query -->
@@ -532,24 +398,15 @@ button.danger:hover{background:#991b1b}
         <span class="chip" onclick="quickAsk('Give me a quick bull or bear read on this asset right now.')">Bull / bear?</span>
         <span class="chip" onclick="quickAsk('Is this a good entry point or should I wait?')">Entry signal?</span>
         <span class="chip" onclick="quickAsk('What would a 5% swing from the current price look like in dollars?')">5% swing in $</span>
-        <span class="chip" onclick="quickAsk('Is this near a psychological price level like a round number?')">Key level?</span>
-        <span class="chip" onclick="quickAsk('How has this asset moved over the last 24 hours — steady or volatile?')">24h movement</span>
-        <span class="chip" onclick="quickAsk('What is the risk if I enter at the current price?')">Risk at entry</span>
         <span class="chip" onclick="quickAsk('Compare BTC and ETH — which is performing better today?')">BTC vs ETH</span>
-        <span class="chip" onclick="quickAsk('Compare SOL, AVAX, and BNB prices right now.')">SOL / AVAX / BNB</span>
         <span class="chip" onclick="quickAsk('Summarise the current market conditions for this asset.')">Market summary</span>
-        <span class="chip" onclick="quickAsk('Should I be concerned about this price movement?')">Cause for concern?</span>
-        <span class="chip" onclick="quickAsk('Where would a reasonable stop loss be from the current price?')">Stop loss level</span>
       </div>
       <div class="result" id="askResult"></div>
-      <div id="emailNowRow" style="display:none;margin-top:8px;text-align:right">
-        <button id="emailNowBtn" onclick="emailNow()" style="width:auto;padding:6px 14px;font-size:12px;background:#1e1e2e;border:1px solid #2e2e40;color:#94a3b8">Email this</button>
-      </div>
     </div>
 
     <!-- Price Watch -->
     <div class="card">
-      <div class="card-title">Price Watch</div>
+      <div class="card-title">Price Watch <span style="float:right;font-size:10px;color:#4a4a60" id="watchSummary"></span></div>
       <div class="row-3">
         <div>
           <label>Symbol</label>
@@ -575,16 +432,57 @@ button.danger:hover{background:#991b1b}
         <input id="wThreshold" type="number" placeholder="90000" min="0" step="any" />
       </div>
       <div class="row" style="margin-top:10px">
-        <button onclick="startWatch()">Start Watch</button>
+        <button onclick="addWatch()">Add Watch</button>
       </div>
       <div id="watchList" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Recent alerts log -->
+    <div class="card">
+      <div class="card-title">Recent Alerts
+        <span style="float:right">
+          <button class="ghost" onclick="clearAlerts()" style="width:auto;margin:0;padding:4px 10px;font-size:11px">Clear</button>
+        </span>
+      </div>
+      <div id="alertList"></div>
     </div>
 
   </div>
 </div>
 
 <script>
-let _lastAnswer = '', _lastSymbol = ''
+// ═════════════════════════════════════════════════════════════════════════
+// Client-side per-user state — every browser keeps its own watches + alerts
+// in localStorage. The server never sees them.
+// ═════════════════════════════════════════════════════════════════════════
+
+const WATCHES_KEY = 'stock_alert.watches.v1'
+const ALERTS_KEY  = 'stock_alert.alerts.v1'
+const AVKEY_KEY   = 'stock_alert.av_key.v1'  // per-browser Alpha Vantage key
+const POLL_MS         = 5 * 60 * 1000    // 5 min between automatic checks
+const ALERT_COOLDOWN  = 30 * 60 * 1000   // suppress duplicate alerts for 30 min
+const MAX_ALERTS      = 50               // alerts log cap
+
+function loadAvKey()      { return localStorage.getItem(AVKEY_KEY) || '' }
+function saveAvKey(k)     { if (k) localStorage.setItem(AVKEY_KEY, k); else localStorage.removeItem(AVKEY_KEY) }
+
+function loadWatches() {
+  try { return JSON.parse(localStorage.getItem(WATCHES_KEY) || '[]') }
+  catch { return [] }
+}
+function saveWatches(ws) { localStorage.setItem(WATCHES_KEY, JSON.stringify(ws)) }
+
+function loadAlerts() {
+  try { return JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]') }
+  catch { return [] }
+}
+function saveAlerts(as) { localStorage.setItem(ALERTS_KEY, JSON.stringify(as)) }
+
+function watchKey(w) { return `${w.symbol}|${w.direction}|${w.threshold}|${w.isStock?'s':'c'}` }
+
+// ═════════════════════════════════════════════════════════════════════════
+// Market Query
+// ═════════════════════════════════════════════════════════════════════════
 
 function quickAsk(q) {
   document.getElementById('qQuestion').value = q
@@ -596,10 +494,18 @@ async function ask() {
   const q      = document.getElementById('qQuestion').value.trim()
   if (!symbol || !q) return
   const isStock = document.getElementById('qType').value === 'stock'
+  const avKey   = loadAvKey()
 
   const btn    = document.getElementById('askBtn')
   const result = document.getElementById('askResult')
-  document.getElementById('emailNowRow').style.display = 'none'
+
+  if (isStock && !avKey) {
+    result.className = 'result visible fadein'
+    result.style.color = '#fbbf24'
+    result.textContent = 'Stock quotes need an Alpha Vantage key. Paste yours in the left panel and click Save.'
+    return
+  }
+  result.style.color = ''
   btn.disabled = true
   result.className = 'result visible fadein'
   result.innerHTML = '<span class="thinking"><span class="spinner">⟳</span> Thinking…</span>'
@@ -608,40 +514,17 @@ async function ask() {
     const res = await fetch('/ask', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol, question: q, is_stock: isStock})
+      body: JSON.stringify({symbol, question: q, is_stock: isStock,
+                            alpha_vantage_key: avKey || null})
     })
     if (!res.ok) throw new Error(await res.text())
     const data = await res.json()
-    _lastAnswer = data.answer
-    _lastSymbol = symbol
     result.innerHTML = renderAnswer(data.answer)
-    document.getElementById('emailNowRow').style.display = ''
   } catch (err) {
     result.style.color = '#f87171'
     result.textContent = 'Error: ' + err.message
   } finally {
     btn.disabled = false
-  }
-}
-
-async function emailNow() {
-  if (!_lastAnswer) return
-  const btn = document.getElementById('emailNowBtn')
-  btn.disabled = true; btn.textContent = 'Sending…'
-  try {
-    const res = await fetch('/email/send', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({subject: `Stock Alert — ${_lastSymbol}`, body: _lastAnswer})
-    })
-    if (!res.ok) throw new Error(await res.text())
-    btn.textContent = 'Sent ✓'
-    btn.style.color = '#34d399'
-    setTimeout(() => { btn.textContent = 'Email this'; btn.style.color = ''; btn.disabled = false }, 2500)
-  } catch (err) {
-    btn.textContent = 'Failed'
-    btn.style.color = '#f87171'
-    setTimeout(() => { btn.textContent = 'Email this'; btn.style.color = ''; btn.disabled = false }, 2500)
   }
 }
 
@@ -654,135 +537,222 @@ function renderAnswer(text) {
     .replace(/\\n/g,'<br>')
 }
 
-async function startWatch() {
+// ═════════════════════════════════════════════════════════════════════════
+// Watches — owned entirely by the browser
+// ═════════════════════════════════════════════════════════════════════════
+
+function addWatch() {
   const symbol    = document.getElementById('wSymbol').value.trim().toUpperCase()
   const threshold = parseFloat(document.getElementById('wThreshold').value)
   const direction = document.getElementById('wDirection').value
   const isStock   = document.getElementById('wType').value === 'stock'
-  if (!symbol || isNaN(threshold)) return
+  if (!symbol || isNaN(threshold) || threshold <= 0) return
 
-  try {
-    const res = await fetch('/watch/start', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol, threshold, direction, is_stock: isStock})
-    })
-    if (!res.ok) throw new Error(await res.text())
-    await refreshWatchList()
-    document.getElementById('wSymbol').value    = ''
-    document.getElementById('wThreshold').value = ''
-  } catch (err) {
-    alert('Failed to start watch: ' + err.message)
-  }
-}
-
-async function stopWatch(symbol) {
-  await fetch('/watch/stop', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({symbol})
-  })
-  await refreshWatchList()
-}
-
-async function refreshWatchList() {
-  const res   = await fetch('/watch/status')
-  const list  = await res.json()
-  const el    = document.getElementById('watchList')
-  if (!list.length) {
-    el.innerHTML = '<div class="status-row"><span class="dot off"></span><span class="status-text">No active watches</span></div>'
+  if (isStock && !loadAvKey()) {
+    alert('Stock watches need an Alpha Vantage key. Paste yours in the left panel first.')
     return
   }
-  el.innerHTML = list.map(w => {
+
+  const ws = loadWatches()
+  // dedup: same symbol+direction+threshold replaces the existing entry.
+  const idx = ws.findIndex(w => watchKey(w) === watchKey({symbol, threshold, direction, isStock}))
+  const entry = {symbol, threshold, direction, isStock,
+                 addedAt: Date.now(), lastCheckedAt: 0, lastTriggeredAt: 0,
+                 lastMessage: ''}
+  if (idx >= 0) ws[idx] = entry; else ws.push(entry)
+  saveWatches(ws)
+
+  document.getElementById('wSymbol').value    = ''
+  document.getElementById('wThreshold').value = ''
+  renderWatches()
+  // Run an immediate check for the new watch — gives the user instant feedback.
+  checkOne(entry).then(renderWatches)
+}
+
+function removeWatch(key) {
+  saveWatches(loadWatches().filter(w => watchKey(w) !== key))
+  renderWatches()
+}
+
+function renderWatches() {
+  const el  = document.getElementById('watchList')
+  const ws  = loadWatches()
+  document.getElementById('watchSummary').textContent =
+    ws.length ? `${ws.length} active · checks every 5 min` : ''
+  if (!ws.length) {
+    el.innerHTML = '<div class="status-row"><span class="dot off"></span><span class="status-text">No active watches — add one above</span></div>'
+    return
+  }
+  el.innerHTML = ws.map(w => {
     const dir   = w.direction === 'above' ? '↑' : '↓'
-    const email = w.email_to && w.email_to !== '(not configured)' ? ` · ${w.email_to}` : ''
-    return `<div class="status-row" style="margin-bottom:6px">
-      <span class="dot on"></span>
-      <span class="status-text"><strong>${w.symbol}</strong> ${dir} $${Number(w.threshold).toLocaleString()}${email}</span>
-      <button class="danger" onclick="stopWatch('${w.symbol}')" style="width:auto;margin:0;padding:4px 10px;font-size:12px">Stop</button>
+    const last  = w.lastCheckedAt
+      ? `last checked ${fmtAgo(w.lastCheckedAt)}`
+      : 'not yet checked'
+    const fired = w.lastTriggeredAt
+      ? ` · <span style="color:#f87171">fired ${fmtAgo(w.lastTriggeredAt)}</span>`
+      : ''
+    const dotCls = w.lastTriggeredAt ? 'alert' : (w.lastCheckedAt ? 'on' : 'warn')
+    const key   = watchKey(w)
+    return `<div class="status-row" style="margin-bottom:6px;align-items:flex-start;flex-wrap:wrap">
+      <span class="dot ${dotCls}" style="margin-top:4px"></span>
+      <span class="status-text" style="line-height:1.5">
+        <strong>${w.symbol}</strong> ${dir} $${Number(w.threshold).toLocaleString()}
+        <span style="color:#4a4a60">(${w.isStock?'stock':'crypto'})</span><br>
+        <span style="font-size:11px;color:#4a4a60">${last}${fired}</span>
+      </span>
+      <span style="display:flex;gap:6px;flex-shrink:0">
+        <button class="ghost" onclick="manualCheck('${key}')" style="width:auto;margin:0;padding:4px 10px;font-size:11px">Check now</button>
+        <button class="danger" onclick="removeWatch('${key}')" style="width:auto;margin:0;padding:4px 10px;font-size:11px">Remove</button>
+      </span>
     </div>`
   }).join('')
 }
 
-// ── API Keys ───────────────────────────────────────────────────────────────
+async function manualCheck(key) {
+  const ws = loadWatches()
+  const w  = ws.find(x => watchKey(x) === key)
+  if (!w) return
+  await checkOne(w)
+  renderWatches()
+}
 
-async function saveApi() {
-  const key = document.getElementById('avKey').value.trim()
-  if (!key) return
-  const btn = document.getElementById('apiSaveBtn')
-  btn.disabled = true; btn.textContent = '…'
+async function checkOne(watch) {
   try {
-    const res = await fetch('/api/config', {
+    const res = await fetch('/check', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({alpha_vantage_key: key})
+      body: JSON.stringify({
+        symbol: watch.symbol, threshold: watch.threshold,
+        direction: watch.direction, is_stock: watch.isStock,
+        alpha_vantage_key: loadAvKey() || null,
+      })
     })
     if (!res.ok) throw new Error(await res.text())
-    setApiUI(true)
+    const data = await res.json()
+
+    // Persist the result on the watch entry.
+    const ws = loadWatches()
+    const idx = ws.findIndex(x => watchKey(x) === watchKey(watch))
+    if (idx < 0) return  // watch was removed mid-flight
+    ws[idx].lastCheckedAt = Date.now()
+    ws[idx].lastMessage   = data.message
+
+    if (data.triggered) {
+      const since = Date.now() - (ws[idx].lastTriggeredAt || 0)
+      // Cooldown: avoid re-logging every 5 min while the price stays past threshold.
+      if (since >= ALERT_COOLDOWN) {
+        ws[idx].lastTriggeredAt = Date.now()
+        appendAlert(watch.symbol, data.message)
+      }
+    }
+    saveWatches(ws)
   } catch (err) {
-    alert('Failed to save API key: ' + err.message)
-  } finally {
-    btn.disabled = false; btn.textContent = 'Save'
+    console.warn('check failed for', watch.symbol, err)
   }
+}
+
+async function checkAll() {
+  const ws = loadWatches()
+  if (!ws.length) return
+  // Run sequentially so we don't fan-out N concurrent agent invocations.
+  for (const w of ws) {
+    await checkOne(w)
+  }
+  renderWatches()
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Alerts log
+// ═════════════════════════════════════════════════════════════════════════
+
+function appendAlert(symbol, message) {
+  const list = loadAlerts()
+  list.unshift({symbol, message, ts: Date.now()})
+  if (list.length > MAX_ALERTS) list.length = MAX_ALERTS
+  saveAlerts(list)
+  renderAlerts()
+}
+
+function clearAlerts() {
+  if (!confirm('Clear all alerts on this browser?')) return
+  saveAlerts([])
+  renderAlerts()
+}
+
+function renderAlerts() {
+  const el   = document.getElementById('alertList')
+  const list = loadAlerts()
+  if (!list.length) {
+    el.innerHTML = '<div class="status-row"><span class="dot off"></span><span class="status-text">No alerts yet</span></div>'
+    return
+  }
+  el.innerHTML = list.map(a => `
+    <div class="alert-row fired fadein">
+      <div class="ts">${new Date(a.ts).toLocaleString()} · ${escapeHtml(a.symbol)}</div>
+      <div class="body">${escapeHtml(a.message)}</div>
+    </div>`).join('')
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Alpha Vantage key — per-user, lives in this browser's localStorage only.
+// Sent on every /ask and /check; never stored on the server.
+// ═════════════════════════════════════════════════════════════════════════
+
+function saveApi() {
+  const key = document.getElementById('avKey').value.trim()
+  saveAvKey(key)
+  // Don't echo the saved key back into the input — leave it on whatever the
+  // user typed; the masked field still hides it on subsequent loads.
+  setApiUI(!!key)
 }
 
 function setApiUI(configured) {
   document.getElementById('apiDot').className = 'dot ' + (configured ? 'on' : 'off')
-  document.getElementById('apiLabel').textContent = configured
-    ? 'Alpha Vantage key configured'
-    : 'Alpha Vantage key not set'
+  document.getElementById('apiLabel').innerHTML = configured
+    ? '<strong>Saved in this browser</strong>'
+    : 'Not set — paste your key'
 }
 
-fetch('/api/status').then(r => r.json()).then(s => setApiUI(s.alpha_vantage_configured))
+// ═════════════════════════════════════════════════════════════════════════
+// Helpers + boot
+// ═════════════════════════════════════════════════════════════════════════
 
-// ── Email ──────────────────────────────────────────────────────────────────
-
-async function saveEmail() {
-  const host     = document.getElementById('eHost').value.trim()
-  const user     = document.getElementById('eUser').value.trim()
-  const password = document.getElementById('ePassword').value
-  const to       = document.getElementById('eTo').value.trim()
-  if (!user || !password || !to) return
-
-  const btn = document.getElementById('emailSaveBtn')
-  btn.disabled = true; btn.textContent = '…'
-  try {
-    const res = await fetch('/email/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, user, password, to})
-    })
-    if (!res.ok) throw new Error(await res.text())
-    const data = await res.json()
-    setEmailUI(true, data)
-  } catch (err) {
-    alert('Failed to save email config: ' + err.message)
-  } finally {
-    btn.disabled = false; btn.textContent = 'Save'
-  }
+function escapeHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
 
-function setEmailUI(configured, cfg) {
-  document.getElementById('emailDot').className = 'dot ' + (configured ? 'on' : 'off')
-  const label = document.getElementById('emailLabel')
-  if (configured && cfg) {
-    label.innerHTML = `Alerts → <strong>${cfg.to}</strong> via ${cfg.host}`
-  } else {
-    label.innerHTML = 'Not configured'
-  }
+function fmtAgo(ts) {
+  const s = Math.round((Date.now() - ts) / 1000)
+  if (s < 60)  return `${s}s ago`
+  const m = Math.round(s/60)
+  if (m < 60)  return `${m}m ago`
+  const h = Math.round(m/60)
+  if (h < 24)  return `${h}h ago`
+  return new Date(ts).toLocaleString()
 }
 
-// Restore state on load
-fetch('/email/status').then(r => r.json()).then(s => {
-  if (s.configured) {
-    document.getElementById('eHost').value = s.host || 'smtp.gmail.com'
-    document.getElementById('eUser').value = s.user || ''
-    document.getElementById('eTo').value   = s.to   || ''
-    setEmailUI(true, s)
-  }
+// Boot — read the key (if any) from this browser's localStorage.
+{
+  const k = loadAvKey()
+  if (k) document.getElementById('avKey').value = k    // pre-fill (still masked)
+  setApiUI(!!k)
+}
+renderWatches()
+renderAlerts()
+
+// Polling: run every POLL_MS while the tab is open. Re-render countdown text
+// every 30s so "last checked" stays fresh.
+setInterval(checkAll, POLL_MS)
+setInterval(renderWatches, 30 * 1000)
+
+// When the tab becomes visible again after being hidden, run a check
+// immediately if the last poll was a while ago — covers laptop-sleep cases.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return
+  const ws = loadWatches()
+  const stale = ws.some(w => Date.now() - (w.lastCheckedAt || 0) > POLL_MS)
+  if (stale) checkAll()
 })
-
-refreshWatchList()
 </script>
 </body>
 </html>

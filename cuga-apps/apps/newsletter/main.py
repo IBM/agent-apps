@@ -34,11 +34,9 @@ import asyncio
 import json
 import logging
 import os
-import smtplib
 import sys
 import uuid
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
 from pathlib import Path
 
 _DIR       = Path(__file__).parent
@@ -172,45 +170,6 @@ def make_agent():
 
 
 # ---------------------------------------------------------------------------
-# Email — in-memory config (UI-settable, falls back to env vars)
-# ---------------------------------------------------------------------------
-
-_email_config: dict = {}
-
-
-def _get_email_cfg() -> dict:
-    return {
-        "host":     _email_config.get("host")     or os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "user":     _email_config.get("user")     or os.getenv("SMTP_USERNAME", ""),
-        "password": _email_config.get("password") or os.getenv("SMTP_PASSWORD", ""),
-        "to":       _email_config.get("to")       or os.getenv("ALERT_TO", ""),
-    }
-
-
-def _send_email(subject: str, body: str) -> bool:
-    """Send email. Returns True if sent, False if not configured or failed."""
-    cfg = _get_email_cfg()
-    if not (cfg["to"] and cfg["user"] and cfg["password"]):
-        log.info("[EMAIL — not configured] %s", subject)
-        return False
-
-    msg            = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"]    = cfg["user"]
-    msg["To"]      = cfg["to"]
-
-    try:
-        with smtplib.SMTP_SSL(cfg["host"], 465) as smtp:
-            smtp.login(cfg["user"], cfg["password"])
-            smtp.send_message(msg)
-        log.info("Email sent → %s  subject=%s", cfg["to"], subject)
-        return True
-    except Exception as exc:
-        log.error("Failed to send email: %s", exc)
-        return False
-
-
-# ---------------------------------------------------------------------------
 # Alert runner + background scheduler
 # ---------------------------------------------------------------------------
 
@@ -225,7 +184,6 @@ async def _run_alert_now(agent, alert: dict, feeds: list[str]) -> dict:
             "keywords":  alert["keywords"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "result":    "No feeds configured — add feed URLs in the left panel.",
-            "sent":      False,
         }
         _alert_log.insert(0, entry)
         if len(_alert_log) > 20:
@@ -245,16 +203,12 @@ async def _run_alert_now(agent, alert: dict, feeds: list[str]) -> dict:
     except Exception as exc:
         answer = f"Error running alert: {exc}"
 
-    sent = False
-    if answer.startswith("ALERT"):
-        sent = _send_email(f"Newsletter Alert: {alert['keywords']}", answer)
-
     entry = {
         "alert_id":  alert["id"],
         "keywords":  alert["keywords"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "result":    answer,
-        "sent":      sent,
+        "matched":   answer.startswith("ALERT"),
     }
     _alert_log.insert(0, entry)
     if len(_alert_log) > 20:
@@ -316,18 +270,6 @@ class AskReq(BaseModel):
     question: str
 
 
-class EmailConfigReq(BaseModel):
-    host: str = "smtp.gmail.com"
-    user: str
-    password: str
-    to: str
-
-
-class EmailSendReq(BaseModel):
-    subject: str
-    body: str
-
-
 class FeedAddReq(BaseModel):
     url: str
 
@@ -369,12 +311,7 @@ def _web(port: int) -> None:
 
     _agent = make_agent()
 
-    # -- restore persisted email config on startup --
     _stored = _load_store()
-    if _stored.get("email"):
-        global _email_config
-        _email_config = _stored["email"]
-        log.info("Restored email config → %s", _email_config.get("to"))
 
     if _stored.get("alerts"):
         log.info("Restored %d alert(s)", len(_stored["alerts"]))
@@ -493,27 +430,6 @@ def _web(port: int) -> None:
     def alerts_recent():
         return {"log": _alert_log}
 
-    # ── Email endpoints ────────────────────────────────────────────────────
-
-    @app.post("/email/config")
-    def email_config(req: EmailConfigReq):
-        global _email_config
-        _email_config = {"host": req.host, "user": req.user, "password": req.password, "to": req.to}
-        _update_store(email=_email_config)
-        log.info("Email config updated → %s", req.to)
-        return {"status": "saved", "to": req.to, "host": req.host, "user": req.user}
-
-    @app.get("/email/status")
-    def email_status():
-        cfg = _get_email_cfg()
-        configured = bool(cfg["to"] and cfg["user"] and cfg["password"])
-        return {"configured": configured, "to": cfg["to"], "host": cfg["host"], "user": cfg["user"]}
-
-    @app.post("/email/send")
-    def email_send(req: EmailSendReq):
-        sent = _send_email(req.subject, req.body)
-        return {"status": "sent" if sent else "not_configured"}
-
     # ── HTML ───────────────────────────────────────────────────────────────
 
     @app.get("/", response_class=HTMLResponse)
@@ -610,29 +526,6 @@ button.btn-sm:hover{background:#252535}
       </div>
       <div id="feedList" style="margin-top:10px;min-height:20px"></div>
 
-      <div class="section-label">Email Settings</div>
-      <div class="field">
-        <label>SMTP Host</label>
-        <input id="eHost" type="text" placeholder="smtp.gmail.com" value="smtp.gmail.com" />
-      </div>
-      <div class="field">
-        <label>Username</label>
-        <input id="eUser" type="text" placeholder="you@example.com" />
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input id="ePassword" type="password" placeholder="app password" />
-      </div>
-      <div class="field">
-        <label>Send alerts to</label>
-        <input id="eTo" type="text" placeholder="recipient@example.com" />
-      </div>
-      <button id="emailSaveBtn" onclick="saveEmail()">Save email settings</button>
-      <div class="status-row">
-        <span class="dot off" id="emailDot"></span>
-        <span class="status-text" id="emailLabel">Not configured</span>
-      </div>
-
     </div>
   </div>
 
@@ -664,9 +557,6 @@ button.btn-sm:hover{background:#252535}
         <span class="chip" onclick="quickAsk('Find anything about AI applications in science or healthcare')">AI in science</span>
       </div>
       <div class="result" id="askResult"></div>
-      <div id="emailNowRow" style="display:none;margin-top:8px;text-align:right">
-        <button id="emailNowBtn" onclick="emailNow()" style="width:auto;padding:6px 14px;font-size:12px;background:#1e1e2e;border:1px solid #2e2e40;color:#94a3b8;margin-top:0">Email this</button>
-      </div>
     </div>
 
     <!-- Scheduled Alerts -->
@@ -693,7 +583,7 @@ button.btn-sm:hover{background:#252535}
 
       <div id="alertList" style="margin-top:12px"></div>
 
-      <div class="section-label" style="margin-top:18px">Recent Outputs</div>
+      <div class="section-label" style="margin-top:18px">Recent Alerts</div>
       <div id="recentLog"></div>
     </div>
 
@@ -701,8 +591,6 @@ button.btn-sm:hover{background:#252535}
 </div>
 
 <script>
-let _lastAnswer = '', _lastQuestion = ''
-
 // ── Feeds ──────────────────────────────────────────────────────────────────
 
 async function loadFeeds() {
@@ -764,7 +652,6 @@ async function ask() {
 
   const btn    = document.getElementById('askBtn')
   const result = document.getElementById('askResult')
-  document.getElementById('emailNowRow').style.display = 'none'
   btn.disabled = true
   result.className = 'result visible fadein'
   result.innerHTML = '<span class="thinking"><span class="spinner">⟳</span> Thinking…</span>'
@@ -777,37 +664,12 @@ async function ask() {
     })
     if (!res.ok) throw new Error(await res.text())
     const data = await res.json()
-    _lastAnswer   = data.answer
-    _lastQuestion = q
     result.innerHTML = renderAnswer(data.answer)
-    document.getElementById('emailNowRow').style.display = ''
   } catch (err) {
     result.style.color = '#f87171'
     result.textContent = 'Error: ' + err.message
   } finally {
     btn.disabled = false
-  }
-}
-
-async function emailNow() {
-  if (!_lastAnswer) return
-  const btn = document.getElementById('emailNowBtn')
-  btn.disabled = true; btn.textContent = 'Sending…'
-  try {
-    const res = await fetch('/email/send', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        subject: 'Newsletter Intel — ' + _lastQuestion.slice(0, 60),
-        body: _lastAnswer
-      })
-    })
-    if (!res.ok) throw new Error(await res.text())
-    btn.textContent = 'Sent ✓'; btn.style.color = '#34d399'
-    setTimeout(() => { btn.textContent = 'Email this'; btn.style.color = ''; btn.disabled = false }, 2500)
-  } catch (err) {
-    btn.textContent = 'Failed'; btn.style.color = '#f87171'
-    setTimeout(() => { btn.textContent = 'Email this'; btn.style.color = ''; btn.disabled = false }, 2500)
   }
 }
 
@@ -866,13 +728,13 @@ function renderAlertLog(entries) {
     el.innerHTML = '<div style="font-size:12px;color:#4a4a60;padding:4px 0">No recent outputs</div>'
     return
   }
-  el.innerHTML = entries.slice(0, 5).map(e => {
+  el.innerHTML = entries.slice(0, 20).map(e => {
     const ts      = new Date(e.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
     const isAlert = e.result.startsWith('ALERT')
     const preview = e.result.slice(0, 240)
-    const sentTag = e.sent ? ' · <span style="color:#34d399">emailed</span>' : ''
+    const matchTag = isAlert ? ' · <span style="color:#fbbf24">match</span>' : ''
     return `<div class="log-entry">
-      <div class="log-meta">${ts} · <strong>${e.keywords}</strong>${sentTag}</div>
+      <div class="log-meta">${ts} · <strong>${e.keywords}</strong>${matchTag}</div>
       <div class="log-body${isAlert ? ' alert-hit' : ''}">${preview}${e.result.length > 240 ? '…' : ''}</div>
     </div>`
   }).join('')
@@ -928,54 +790,13 @@ async function runAlert(id) {
   await loadAlerts()
 }
 
-// ── Email ──────────────────────────────────────────────────────────────────
-
-async function saveEmail() {
-  const host     = document.getElementById('eHost').value.trim()
-  const user     = document.getElementById('eUser').value.trim()
-  const password = document.getElementById('ePassword').value
-  const to       = document.getElementById('eTo').value.trim()
-  if (!user || !password || !to) return
-
-  const btn = document.getElementById('emailSaveBtn')
-  btn.disabled = true; btn.textContent = '…'
-  try {
-    const res = await fetch('/email/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, user, password, to})
-    })
-    if (!res.ok) throw new Error(await res.text())
-    const data = await res.json()
-    setEmailUI(true, data)
-  } catch (err) {
-    alert('Failed to save email settings: ' + err.message)
-  } finally {
-    btn.disabled = false; btn.textContent = 'Save email settings'
-  }
-}
-
-function setEmailUI(configured, cfg) {
-  document.getElementById('emailDot').className = 'dot ' + (configured ? 'on' : 'off')
-  const label = document.getElementById('emailLabel')
-  label.innerHTML = configured && cfg
-    ? `Alerts → <strong>${cfg.to}</strong>`
-    : 'Not configured'
-}
-
 // ── Init ───────────────────────────────────────────────────────────────────
-
-fetch('/email/status').then(r => r.json()).then(s => {
-  if (s.configured) {
-    document.getElementById('eHost').value = s.host || 'smtp.gmail.com'
-    document.getElementById('eUser').value = s.user || ''
-    document.getElementById('eTo').value   = s.to   || ''
-    setEmailUI(true, s)
-  }
-})
 
 loadFeeds()
 loadAlerts()
+// Refresh the alerts log every 30s so server-side scheduled runs surface in
+// the bottom panel without a manual reload.
+setInterval(loadAlerts, 30000)
 </script>
 </body>
 </html>

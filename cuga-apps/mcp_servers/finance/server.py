@@ -80,19 +80,26 @@ def get_crypto_price(symbol: str, vs_currency: str = "usd") -> str:
 
 
 @mcp.tool()
-def get_stock_quote(symbol: str) -> str:
+def get_stock_quote(symbol: str, api_key: str | None = None) -> str:
     """Fetch a real-time stock quote via Alpha Vantage.
 
     Args:
-        symbol: Stock ticker (e.g. "AAPL", "NVDA", "SPY").
+        symbol:  Stock ticker (e.g. "AAPL", "NVDA", "SPY").
+        api_key: Optional caller-supplied Alpha Vantage key. When provided it
+                 takes precedence over the server-side ALPHA_VANTAGE_API_KEY
+                 env var — lets multi-user apps pass per-user keys instead of
+                 sharing one quota.
 
     Env:
-        ALPHA_VANTAGE_API_KEY required. Free tier = 25 requests/day,
-        so cache aggressively in the caller.
+        ALPHA_VANTAGE_API_KEY (fallback when api_key is not provided).
+        Free tier = 25 requests/day, so cache aggressively in the caller.
     """
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    api_key = api_key or os.getenv("ALPHA_VANTAGE_API_KEY")
     if not api_key:
-        return tool_error("ALPHA_VANTAGE_API_KEY not set on the MCP server.", code="missing_key")
+        return tool_error(
+            "Alpha Vantage key not provided — pass api_key as a tool argument "
+            "or set ALPHA_VANTAGE_API_KEY on the MCP server.",
+            code="missing_key")
     try:
         data = get_json(_ALPHAVANTAGE, params={
             "function": "GLOBAL_QUOTE",

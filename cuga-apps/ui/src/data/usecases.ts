@@ -14,7 +14,7 @@ export type UseCaseType = 'event-driven' | 'document-intelligence' | 'audio-vide
 /** MCP server usage — which tools an app consumes from each shared server. */
 export interface McpServerUsage {
   /** mcp-server name (matches keys in apps/_ports.MCP_PORTS) */
-  server: 'web' | 'knowledge' | 'geo' | 'finance' | 'code' | 'local' | 'text'
+  server: 'web' | 'knowledge' | 'geo' | 'finance' | 'code' | 'local' | 'text' | 'invocable_apis'
   /** tools from that server the app actually uses */
   tools: string[]
 }
@@ -72,18 +72,18 @@ export const USE_CASES: UseCase[] = [
   {
     id: 'stock-alert',
     name: 'Stock & Crypto Alert',
-    tagline: 'Ask market questions or set a threshold alert — browser UI, live data',
+    tagline: 'Ask market questions or set a threshold alert — browser UI, browser-only notifications',
     description:
-      'A browser UI with two panels. Market Query: type any symbol and ask a free-form question — the agent fetches live data and answers with prices and % changes highlighted. Price Watch: configure a background monitor (symbol, threshold, above/below); a custom asyncio loop checks every 5 minutes and emails you when crossed. Crypto uses CoinGecko (no key needed); stocks require an Alpha Vantage key.',
+      'A browser UI with two panels. Market Query: type any symbol and ask a free-form question — the agent fetches live data and answers with prices and % changes highlighted. Price Watch: add a watch (symbol, threshold, above/below); the browser polls every 5 minutes and triggered alerts surface in the Recent Alerts panel at the bottom of the page (in-UI, no browser notifications, no email). Watches, alert history, and the Alpha Vantage API key all live entirely in the user\'s own browser (localStorage). The key is sent on each request and forwarded to mcp-finance as a tool argument, then scrubbed from the agent\'s reply before returning — never persisted on the server. Different browsers see only their own watches and use their own Alpha Vantage quotas. Crypto via CoinGecko (no key needed); stocks via Alpha Vantage (per-user key).',
     category: 'personal',
     type: 'event-driven',
     surface: 'pipeline',
     status: 'working',
-    channels: ['EmailChannel'],
+    channels: [],
     tools: ['get_crypto_price()', 'get_stock_quote()'],
     demoPath: 'apps/stock_alert',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ALPHA_VANTAGE_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ALPHA_VANTAGE_API_KEY'],
       setup: [
         'cd apps/stock_alert',
         'pip install -r requirements.txt',
@@ -91,40 +91,46 @@ export const USE_CASES: UseCase[] = [
       command: 'python main.py',
     },
     architecture:
-      'FastAPI web server serves the single-page UI. Market Query: POST /ask → CugaAgent.invoke(symbol + question) → make_market_tools() fetches live data → answer. Price Watch: POST /watch/start → asyncio task loops every 5 min → agent checks price against threshold → if "PRICE ALERT" in answer, sends SMTP email. Watch state persists in .store.json across restarts.',
-    diagram: `python main.py  →  http://127.0.0.1:18801
+      'FastAPI serves the single-page UI. Server is stateless w.r.t. watches — only two endpoints touch the agent: POST /ask (free-form market query) and POST /check (one threshold check for a single symbol). Each request opens a fresh agent thread (uuid-suffixed) so concurrent users do not share conversation state. Watches, alert history, and notification permission live in browser localStorage; a setInterval loop in the page polls /check every 5 min for each watch and calls Notification API on triggers. Per-user isolation is automatic — every browser is its own world.',
+    diagram: `python main.py  →  http://127.0.0.1:28801
 
 Panel 1 — Market Query (on-demand):
 User: "What is the current price and 24h change?"
 Symbol: BTC  Type: Crypto
-      │  POST /ask
+      │  POST /ask  (stateless — fresh agent thread per call)
       ▼
-CugaAgent + make_market_tools()
+CugaAgent + finance MCP
       │  get_crypto_price("BTC")   ← CoinGecko public API
       ▼
 "BTC is $84,230 (+2.3% in 24h)…"
 
-Panel 2 — Price Watch (background loop):
-User: Start Watch  BTC  Above  $90,000
-      │  POST /watch/start
+Panel 2 — Price Watch (browser-driven, per-user):
+Browser: addWatch(BTC, above, $90,000) → localStorage
+      │  setInterval(5 min)
+      │  POST /check { symbol, threshold, direction }
       ▼
-asyncio task (every 5 min)
+CugaAgent + finance MCP
       │  agent.invoke("Check BTC price. Alert threshold: $90,000 (above).")
       ▼
-"PRICE ALERT — BTC crossed $90,000"  →  SMTP email`,
+{ triggered: true, message: "PRICE ALERT — BTC crossed $90,000" }
+      │
+      ▼
+new Notification("Stock Alert — BTC", { body: ... })
+      + appended to localStorage alerts log (capped at 50)`,
     cugaContribution: [
-      'make_market_tools() wraps CoinGecko and Alpha Vantage APIs — agent gets live prices, volume, and market cap without any HTTP code',
-      'CugaAgent + skills/stock_alert.md — the skill file defines alert format and reasoning rules; swap to change behaviour',
-      'Persistent watch state — .store.json restores active watches and email config on restart',
-      'Email config is settable from the UI — no restart needed to change SMTP credentials',
+      'finance MCP wraps CoinGecko and Alpha Vantage — agent gets live prices, volume, and market cap without any HTTP code',
+      'CugaAgent + inlined synthesis prompt defines the "PRICE ALERT" sentinel; the server parses one substring and the browser does the rest — no LLM-side delivery logic',
+      'Stateless server: every /ask and /check opens a uuid-suffixed thread so concurrent users never share conversation history. No per-user backend identity needed',
+      'Per-user isolation by construction — watches and alert history live in browser localStorage, so a second user on a second browser sees only their own watches without an account system',
+      'Browser Notification API + 30-min cooldown per watch — matches the "alert me when crossed" semantics without spamming every poll cycle while a price stays past threshold',
     ],
     examples: [
       'What is the current price and 24h change?',
       'Is this a good entry point compared to recent range?',
       'Compare BTC and ETH — which is performing better today?',
       'Give me a quick bull or bear read on SOL right now.',
-      'Set a watch: BTC above $90,000, email me when crossed',
-      'Set a watch: AAPL below $180',
+      'Add Watch: BTC above $90,000 — fires a browser notification when crossed',
+      'Add Watch: AAPL below $180',
     ],
     appUrl: 'http://localhost:28801',
     mcpUsage: [
@@ -203,14 +209,14 @@ Alert entry: "python train.py consuming 88% CPU since 14:02"`,
   {
     id: 'newsletter',
     name: 'Newsletter Intelligence',
-    tagline: 'Monitor RSS feeds, ask questions over live articles, set keyword alerts',
+    tagline: 'Monitor RSS feeds, ask questions over live articles, set keyword alerts — in-UI panel, no email',
     type: 'event-driven',
     surface: 'pipeline',
     description:
-      'A browser UI with two panels. Feed Query: ask any question over your configured RSS feeds — the agent fetches live articles and answers in plain language, with an Email this button to send the response to your inbox. Scheduled Alerts: configure keyword monitors that run hourly or daily; the agent searches your feeds and emails you when matches are found. State (feeds, email settings, alerts) persists in .store.json across restarts.',
+      'A browser UI with two panels. Feed Query: ask any question over your configured RSS feeds — the agent fetches live articles and answers in plain language. Scheduled Alerts: configure keyword monitors that run hourly or daily; the agent searches your feeds and matches surface in the Recent Alerts panel at the bottom of the page (no email). Feed list and alert rules persist in .store.json across restarts; the alerts log is in-memory and refreshed every 30s by the browser.',
     category: 'personal',
     status: 'working',
-    channels: ['EmailChannel'],
+    channels: [],
     tools: ['fetch_feed()', 'search_feeds()'],
     demoPath: 'apps/newsletter',
     howToRun: {
@@ -330,11 +336,11 @@ CugaAgent (guided by skills/video_qa.md)
   {
     id: 'drop-summarizer',
     name: 'Drop Summarizer',
-    tagline: 'Drop any file into the inbox — get a plain-English summary instantly',
+    tagline: 'Upload any file — get a plain-English summary instantly, in-UI feed only',
     type: 'document-intelligence',
-    surface: 'pipeline',
+    surface: 'gateway',
     description:
-      'A browser UI with an upload panel and a summary feed. Drop any .txt, .md, .pdf, or image file into the inbox folder (or upload via the browser) — the app extracts text (docling in a subprocess for PDF/images; plain read for TXT/MD), passes it to the agent for summarisation, and the result appears instantly in the feed. Click any file to ask follow-up questions over the stored content. Optional keyword email alerts trigger when a summary matches configured terms. Summaries stored in SQLite.',
+      'A browser UI with an upload panel and a summary feed. Upload any .txt, .md, .pdf, or image file via the browser — the app extracts text (docling in a subprocess for PDF/images; plain read for TXT/MD), passes it to the agent for summarisation, and the result appears in the feed within seconds. Click any file to ask follow-up questions over the stored content. No folder watcher, no email — every summary is the result of an active upload, and the feed itself is the alerts surface. Summaries stored in SQLite.',
     category: 'personal',
     status: 'working',
     channels: [],
@@ -400,14 +406,14 @@ summary contains "critical" → SMTP email → ALERT_TO`,
   {
     id: 'web-researcher',
     name: 'Web Researcher',
-    tagline: 'Schedule recurring web research — results logged and optionally emailed',
+    tagline: 'Schedule recurring web research — results land in the in-UI Research Log',
     type: 'event-driven',
     surface: 'pipeline',
     description:
-      'A browser UI for scheduling recurring web research tasks. Add topics with hourly / daily / weekly cadences — the background scheduler runs overdue topics every 5 minutes using Tavily, logs results to SQLite, and optionally emails them. Also supports ad-hoc searches via the chat panel. Research history persists across restarts.',
+      'A browser UI for scheduling recurring web research tasks. Add topics with hourly / daily / weekly cadences — the background scheduler runs overdue topics every 5 minutes using Tavily and appends results to the Research Log panel (no email). Also supports ad-hoc searches via the chat panel. Research history persists across restarts in SQLite; the UI auto-refreshes every 30s so scheduled completions surface without a manual reload.',
     category: 'personal',
     status: 'working',
-    channels: ['EmailChannel'],
+    channels: [],
     tools: ['web_search()'],
     demoPath: 'apps/web_researcher',
     howToRun: {
@@ -467,6 +473,7 @@ SMTP email → ALERT_TO`,
     tagline: 'Drop a voice memo — Whisper transcribes, agent structures, SQLite stores',
     type: 'audio-video',
     surface: 'pipeline',
+    hidden: true,
     description:
       'A personal journal that accepts audio recordings (.m4a, .mp3, .wav) and text entries via a browser UI. OpenAI Whisper API transcribes audio automatically (local Whisper as fallback). The agent structures each entry and stores it in SQLite alongside a Markdown file. A background watcher monitors ./inbox for new files. A configurable email digest sends a summary of recent entries on schedule.',
     category: 'personal',
@@ -534,13 +541,13 @@ CugaAgent → "You mentioned deadlines and team collaboration…"`,
     id: 'smart-todo',
     name: 'Smart Todo',
     type: 'event-driven',
-    tagline: 'AI-powered task management with natural language input and email reminders',
+    tagline: 'AI-powered task management with natural-language input — in-UI reminders, no email',
     surface: 'pipeline',
     description:
-      'A conversational todo manager with a browser UI. Add tasks in natural language ("remind me to review the PR before EOD"), set due dates, and get email reminders when items come due. Tasks stored in SQLite survive restarts. The tabbed board shows Todos, Reminders, Notes, and Done.',
+      'A conversational todo manager with a browser UI. Add tasks in natural language ("remind me to review the PR before EOD"), set due dates, and the background watcher polls SQLite every 60s for due reminders. When a reminder fires it surfaces in the Recent Alerts panel at the bottom of the page (no email, no per-user accounts). Tasks stored in SQLite survive restarts. The tabbed board shows Todos, Reminders, Notes, and Done.',
     category: 'personal',
     status: 'working',
-    channels: ['EmailChannel'],
+    channels: [],
     tools: ['save_todo()', 'list_todos()', 'mark_done()'],
     demoPath: 'apps/smart_todo',
     howToRun: {
@@ -1308,6 +1315,7 @@ Answer with citation:
     id: 'ibm-whats-new',
     name: "IBM What's New Monitor",
     tagline: 'Track IBM Cloud release notes across services — scheduled digest, email alerts, ad-hoc chat',
+    hidden: true,
     description:
       "A browser UI that monitors IBM Cloud service release notes and What's New announcements. Add services to your watch list (Code Engine, watsonx.ai, Event Streams, etc.), set a daily or weekly schedule, and the agent searches ibm.com and cloud.ibm.com via Tavily for recent changes. Meaningful updates appear in the Digest Log and are emailed automatically. Chat panel for ad-hoc questions like 'what changed in Cloud Object Storage this month?'",
     category: 'enterprise',
@@ -1576,6 +1584,90 @@ curl -X POST https://api.stripe.com/v1/charges \\
     appUrl: 'http://localhost:28811',
     mcpUsage: [],
     inlineTools: ['list_endpoints', 'get_endpoint_details', 'get_schema'],
+  },
+  {
+    id: 'bird-invocable-api',
+    name: 'Bird Invocable API Creator',
+    tagline: 'Turn a Bird-SQL database into a validated invocable API + ground-truth tool-call dataset',
+    type: 'document-intelligence',
+    surface: 'gateway',
+    description:
+      'A browser UI that turns a Bird-SQL database (sqlite + NL questions + gold SQL) into three artifacts: a small set of reusable, parametric Python tools; per-question ground-truth tool-call sequences; and a runnable MCP server you can plug into any tool-calling agent for benchmarking. Pick a database, watch live progress as the agent walks every question — orient on the schema, reason about decomposition, register or reuse tools, smoke-test them on real sqlite, record a sequence, and validate it end-to-end against the gold result. The Question Inspector shows the NL, evidence, gold SQL, recorded sequence, and pass/fail with diff. The Tool Browser shows every registered tool with reuse counts, slot pills, and the qids that reference it.',
+    category: 'enterprise',
+    status: 'working',
+    channels: [],
+    tools: [
+      'db_get_schema()', 'db_sample_rows()', 'db_run_sql()',
+      'bird_list_databases()', 'bird_list_questions()', 'bird_get_question()', 'bird_run_gold()',
+      'tool_register()', 'tool_list()', 'tool_get()', 'tool_call()', 'tool_delete()',
+      'seq_record()', 'seq_execute()', 'seq_validate()',
+      'ignore_set()', 'ignore_list()', 'dataset_emit()',
+    ],
+    demoPath: 'apps/bird_invocable_api_creator',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'BIRD_DEV_JSON', 'BIRD_DBS_DIR'],
+      setup: [
+        'cd apps/bird_invocable_api_creator',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 28815',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. CugaAgent is bound to the 15 invocable_apis MCP tools and a long synthesis-policy system prompt. POST /question/{db}/{qid} runs the loop on a single question; POST /synthesize/{db} kicks off a background job that walks every question (live progress at GET /jobs/{id}). The agent calls db_* to orient, bird_* for the question + oracle, tool_* to register/reuse/call generated tools, and seq_* to record + validate the chain against the gold SQL result on the actual sqlite. dataset_emit freezes the registry to disk under output/<db>/. Server-side guards block forbidden names (question_*, *_wrapper, *_solver, gold_*) and near-duplicate SQL skeletons / name-token overlap, so the LLM cannot bloat the registry. Generated tool code runs in an exec() sandbox with sqlite3/json/re only and a read-only sqlite connection.',
+    diagram: `python main.py --port 28815  →  http://127.0.0.1:28815
+
+User picks db='california_schools', clicks "▶ Run agent on this question" for qid=28
+      │  POST /question/california_schools/28
+      ▼
+CugaAgent + 15 MCP tools (mcp-invocable_apis @ 29107)
+      ├─ bird_get_question(qid=28)        → NL + evidence + gold SQL
+      ├─ bird_run_gold(qid=28)            → 57-row canonical answer
+      ├─ db_get_schema, db_sample_rows
+      ├─ db_run_sql("SELECT DISTINCT FundingType FROM schools")
+      │     → ['Directly funded', 'Locally funded', 'Not in CS funding model']
+      ├─ tool_list                        → see what's already registered
+      ├─ Reasoning: "subquery in gold SQL → 2-step decomposition"
+      ├─ tool_register avg_enrollment_difference_by_funding_type
+      ├─ tool_call(funding_type='Locally funded')  → {avg_difference: 16.7}
+      ├─ tool_register schools_with_enrollment_difference_above
+      ├─ tool_call(threshold=16.7, …)              → 57 schools
+      ├─ seq_record([step1 bind="avg",
+      │              step2 threshold="{{avg.avg_difference}}"])
+      └─ seq_validate                      → passed=true (set-equal vs gold)
+
+dataset_emit  →  output/california_schools/california_schools_{tools.py,
+                                                              tools.json,
+                                                              dataset.json,
+                                                              mcp_server.py,
+                                                              tool_usage.json,
+                                                              validation_report.json}`,
+    cugaContribution: [
+      'Closed-loop synthesis — orient (db_get_schema + DISTINCT), design (decomposition reasoning), register, smoke-test (tool_call on real sqlite), record sequence, validate against gold; up to 2 retries on failure',
+      'Server-side quality guards — forbidden-name patterns, SQL-skeleton equality, ≥85% name-token overlap → reject; the agent cannot bloat the registry with question_N wrappers or near-duplicates',
+      'Cross-question accumulation — every tool registered for question N is visible when synthesizing N+1; reuse is mandatory whenever a tool with different args can answer the new question. The "tools reused across qs" tile is the meta-moat alarm',
+      'Slot-value discovery without leaking the answer — examples come from SELECT DISTINCT but exclude the literal value used in this question\'s gold SQL, so the dataset still tests an agent\'s NL→args mapping',
+      'Validation comparator handles dict-of-list-of-dicts vs SQL tuples, set-equality, casing — every emitted record carries proof its sequence reproduces the gold SQL result on the real sqlite',
+      'Emitted artifacts include a runnable MCP server (output/<db>/<db>_mcp_server.py) so the synthesized API can be benchmarked by any tool-calling agent — not just CUGA',
+    ],
+    examples: [
+      'Run agent on this question (single-question demo from the inspector)',
+      '⚡ Batch synthesize — walk every question in the selected database',
+      'Filter the question list to ✗ fail and re-run the inspector to debug failures',
+      'Open the Tool Browser, sort by "most reused" — the small reusable core of the API',
+      '⊘ Mark ignore on questions with broken gold SQL so they\'re excluded from the keep set',
+      '📥 Re-emit to refresh output/<db>/ artifacts after manual edits',
+    ],
+    appUrl: 'http://localhost:28815',
+    mcpUsage: [
+      { server: 'invocable_apis', tools: [
+        'db_get_schema', 'db_sample_rows', 'db_run_sql',
+        'bird_list_databases', 'bird_list_questions', 'bird_get_question', 'bird_run_gold',
+        'tool_register', 'tool_list', 'tool_get', 'tool_call', 'tool_delete',
+        'seq_record', 'seq_execute', 'seq_validate',
+        'ignore_set', 'ignore_list', 'dataset_emit',
+      ] },
+    ],
+    inlineTools: [],
   },
 ]
 

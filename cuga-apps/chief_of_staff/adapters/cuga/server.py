@@ -68,10 +68,10 @@ Important rule about gap-emission:
   "chucknorris.io", "OpenWeather", "REST Countries", "Hacker News",
   "icanhazdadjoke", "PokeAPI") and you do not have a tool whose name or
   description directly references that service, you MUST emit the gap
-  marker rather than fall back to web_search. Web search is for open-ended
-  fact lookups, not for impersonating named APIs the user explicitly
-  asked for. Only skip the gap marker when an existing tool clearly
-  targets that named service.
+  marker rather than fall back to web_search.
+- For definitional or factual queries (e.g. "What is X?", "Who is X?",
+  "What is the capital of X?"), use web_search if available — DO NOT
+  emit a gap. These are exactly what web_search is for.
 """
 
 
