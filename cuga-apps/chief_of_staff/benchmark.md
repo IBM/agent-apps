@@ -1,5 +1,10 @@
 # Chief of Staff — benchmark suite
 
+> Machine-readable version: [`benchmark.json`](benchmark.json) — 70 cases with
+> `id`, `section_id`, `phase`, `title`, `verdict`, `prompt`, `expected`,
+> `bash_blocks`, and `tests` fields. Treat the JSON as the source of truth
+> for tooling; this Markdown is the human-readable narrative.
+
 Concrete test cases organized by capability + phase. Each example has:
 
 - **The prompt** (what you type into the chat at `http://localhost:5174`)

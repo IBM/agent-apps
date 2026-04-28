@@ -1,0 +1,1136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "chief_of_staff benchmark",
+  "version": "1.0",
+  "description": "End-to-end test cases for cuga-apps/chief_of_staff. Each case has a prompt to type into the chat (or curl block to run), the expected behavior, the verdict class, and what it tests architecturally. Source-of-truth converted from benchmark.md.",
+  "verdicts": {
+    "should_work": {
+      "label": "Should work",
+      "emoji": "✅"
+    },
+    "auto_build": {
+      "label": "Should auto-build a tool",
+      "emoji": "🔧"
+    },
+    "needs_creds": {
+      "label": "Should request credentials",
+      "emoji": "🔐"
+    },
+    "browser": {
+      "label": "Should drive the browser",
+      "emoji": "🌐"
+    },
+    "fail_cleanly": {
+      "label": "Should fail cleanly",
+      "emoji": "❌"
+    },
+    "edge_case": {
+      "label": "Edge case",
+      "emoji": "⚠️"
+    }
+  },
+  "section_index": [
+    {
+      "id": "A",
+      "name": "Skeleton & infrastructure",
+      "phase": null
+    },
+    {
+      "id": "B",
+      "name": "Catalog acquisition",
+      "phase": "phase 2"
+    },
+    {
+      "id": "C",
+      "name": "OpenAPI no-auth tools",
+      "phase": "phase 3"
+    },
+    {
+      "id": "D",
+      "name": "Authenticated APIs",
+      "phase": "phase 3.6"
+    },
+    {
+      "id": "E",
+      "name": "OAuth2",
+      "phase": "phase 3.7"
+    },
+    {
+      "id": "F",
+      "name": "Code-revise loop",
+      "phase": "phase 3.8"
+    },
+    {
+      "id": "G",
+      "name": "Browser tools",
+      "phase": "phase 4"
+    },
+    {
+      "id": "H",
+      "name": "Failure & edge cases",
+      "phase": null
+    },
+    {
+      "id": "I",
+      "name": "Multi-tool composition",
+      "phase": null
+    },
+    {
+      "id": "J",
+      "name": "Direct API surface",
+      "phase": null
+    }
+  ],
+  "case_count": 70,
+  "cases": [
+    {
+      "id": 1,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Health checks across all services",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "all four return `{\"status\":\"ok\",...}`. Backend health includes nested toolsmith health.\n**Tests:** all services boot, can talk to each other.",
+      "tests": "all services boot, can talk to each other.",
+      "bash_blocks": [
+        "curl -s http://localhost:8000/health http://localhost:8001/health \\\n        http://localhost:8002/health http://localhost:8765/health"
+      ],
+      "body_md": "### 1. Health checks across all services\n\n```bash\ncurl -s http://localhost:8000/health http://localhost:8001/health \\\n        http://localhost:8002/health http://localhost:8765/health\n```\n\n✅ Expected: all four return `{\"status\":\"ok\",...}`. Backend health includes nested toolsmith health.\n**Tests:** all services boot, can talk to each other."
+    },
+    {
+      "id": 2,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Empty chat round-trip",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": "hello",
+      "expected": "cuga responds with a greeting. No `acquisition` payload. Tools panel unchanged.\n**Tests:** cuga adapter `/chat` works; orchestrator forwards correctly; UI renders.",
+      "tests": "cuga adapter `/chat` works; orchestrator forwards correctly; UI renders.",
+      "bash_blocks": [],
+      "body_md": "### 2. Empty chat round-trip\n\n**Prompt:** *\"hello\"*\n\n✅ Expected: cuga responds with a greeting. No `acquisition` payload. Tools panel unchanged.\n**Tests:** cuga adapter `/chat` works; orchestrator forwards correctly; UI renders."
+    },
+    {
+      "id": 3,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Tools panel populates",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "right-hand panel shows tools from `mcp-web`, `mcp-local`, `mcp-code` grouped under `MCP_SERVER`.\n**Tests:** registry sync from cuga adapter on startup.",
+      "tests": "registry sync from cuga adapter on startup.",
+      "bash_blocks": [],
+      "body_md": "### 3. Tools panel populates\n\nOpen `http://localhost:5174` in incognito. Header shows `tools: 10–15`.\n✅ Expected: right-hand panel shows tools from `mcp-web`, `mcp-local`, `mcp-code` grouped under `MCP_SERVER`.\n**Tests:** registry sync from cuga adapter on startup."
+    },
+    {
+      "id": 4,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Direct cuga `/tools` endpoint",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "number ≥ 10. Each entry has `name`, `description`, `kind`.\n**Tests:** cuga adapter exposes its loaded tools.",
+      "tests": "cuga adapter exposes its loaded tools.",
+      "bash_blocks": [
+        "curl -s http://localhost:8000/tools | jq 'length'"
+      ],
+      "body_md": "### 4. Direct cuga `/tools` endpoint\n\n```bash\ncurl -s http://localhost:8000/tools | jq 'length'\n```\n\n✅ Expected: number ≥ 10. Each entry has `name`, `description`, `kind`.\n**Tests:** cuga adapter exposes its loaded tools."
+    },
+    {
+      "id": 5,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Direct toolsmith `/tools` (artifacts) endpoint",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "empty list on first run; grows as tools are acquired.\n**Tests:** artifact persistence layer.",
+      "tests": "artifact persistence layer.",
+      "bash_blocks": [
+        "curl -s http://localhost:8001/tools | jq"
+      ],
+      "body_md": "### 5. Direct toolsmith `/tools` (artifacts) endpoint\n\n```bash\ncurl -s http://localhost:8001/tools | jq\n```\n\n✅ Expected: empty list on first run; grows as tools are acquired.\n**Tests:** artifact persistence layer."
+    },
+    {
+      "id": 6,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Effective state",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{mcp_servers: [], extra_tools: [], secrets: {}, blocked_artifacts: []}` initially.\n**Tests:** the merged state the backend hands to cuga reload.",
+      "tests": "the merged state the backend hands to cuga reload.",
+      "bash_blocks": [
+        "curl -s http://localhost:8001/effective_state | jq"
+      ],
+      "body_md": "### 6. Effective state\n\n```bash\ncurl -s http://localhost:8001/effective_state | jq\n```\n\n✅ Expected: `{mcp_servers: [], extra_tools: [], secrets: {}, blocked_artifacts: []}` initially.\n**Tests:** the merged state the backend hands to cuga reload."
+    },
+    {
+      "id": 7,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Vault status",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`coder` is `gpt_oss` or `claude` per env; `orchestration_llm` true if RITS keys present.\n**Tests:** Toolsmith config from env.",
+      "tests": "Toolsmith config from env.",
+      "bash_blocks": [
+        "curl -s http://localhost:8001/health | jq '.coder, .orchestration_llm, .artifact_count'"
+      ],
+      "body_md": "### 7. Vault status\n\n```bash\ncurl -s http://localhost:8001/health | jq '.coder, .orchestration_llm, .artifact_count'\n```\n\n✅ Expected: `coder` is `gpt_oss` or `claude` per env; `orchestration_llm` true if RITS keys present.\n**Tests:** Toolsmith config from env."
+    },
+    {
+      "id": 8,
+      "section_id": "A",
+      "section_name": "Skeleton & infrastructure",
+      "phase": null,
+      "title": "Frontend rebuild without backend",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "no JS crash. Bring backend back, refresh, normal operation.\n**Tests:** frontend resilience.\n\n---",
+      "tests": "frontend resilience.",
+      "bash_blocks": [
+        "docker stop cuga-apps-cos-backend"
+      ],
+      "body_md": "### 8. Frontend rebuild without backend\n\nStop just the backend:\n```bash\ndocker stop cuga-apps-cos-backend\n```\nHard-refresh `:5174`. Header shows `backend: backend-down`. Chat input still visible but submit fails gracefully.\n✅ Expected: no JS crash. Bring backend back, refresh, normal operation.\n**Tests:** frontend resilience.\n\n---"
+    },
+    {
+      "id": 9,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "Wikipedia",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Look up the Eiffel Tower on Wikipedia.",
+      "expected": "- Cuga emits `[[TOOL_GAP]] {capability: \"wikipedia search\"}`\n- Toolsmith catalog match → `Knowledge MCP`\n- Green \"Toolsmith built a tool\" notice\n- Tools panel grows by ~10 (knowledge tools)\n- Re-ask gets a real Wikipedia summary",
+      "tests": "catalog source + live mount of an MCP server (no codegen).",
+      "bash_blocks": [],
+      "body_md": "### 9. Wikipedia\n\n**Prompt:** *\"Look up the Eiffel Tower on Wikipedia.\"*\n\n🔧 Expected:\n- Cuga emits `[[TOOL_GAP]] {capability: \"wikipedia search\"}`\n- Toolsmith catalog match → `Knowledge MCP`\n- Green \"Toolsmith built a tool\" notice\n- Tools panel grows by ~10 (knowledge tools)\n- Re-ask gets a real Wikipedia summary\n\n**Tests:** catalog source + live mount of an MCP server (no codegen)."
+    },
+    {
+      "id": 10,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "Stock prices",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's NVIDIA's current stock price?",
+      "expected": "- Catalog match → `Finance MCP`\n- After install, re-ask returns a real quote.",
+      "tests": "catalog matching across different domain.",
+      "bash_blocks": [],
+      "body_md": "### 10. Stock prices\n\n**Prompt:** *\"What's NVIDIA's current stock price?\"*\n\n🔧 Expected:\n- Catalog match → `Finance MCP`\n- After install, re-ask returns a real quote.\n\n**Tests:** catalog matching across different domain."
+    },
+    {
+      "id": 11,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "Geocoding",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What are the lat/lon for Paris, France?",
+      "expected": "- Catalog match → `Geo MCP`\n- After install, geocode tools available.",
+      "tests": "geo MCP mount.",
+      "bash_blocks": [],
+      "body_md": "### 11. Geocoding\n\n**Prompt:** *\"What are the lat/lon for Paris, France?\"*\n\n🔧 Expected:\n- Catalog match → `Geo MCP`\n- After install, geocode tools available.\n\n**Tests:** geo MCP mount."
+    },
+    {
+      "id": 12,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "PDF text extraction",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Extract text from this PDF: https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "expected": "- Catalog match → `Text MCP`\n- After install, returns the PDF's text.",
+      "tests": "text MCP mount with URL parameter.",
+      "bash_blocks": [],
+      "body_md": "### 12. PDF text extraction\n\n**Prompt:** *\"Extract text from this PDF: https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\"*\n\n🔧 Expected:\n- Catalog match → `Text MCP`\n- After install, returns the PDF's text.\n\n**Tests:** text MCP mount with URL parameter."
+    },
+    {
+      "id": 13,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "Multiple catalog acquisitions in sequence",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": null,
+      "expected": "tools panel grows with each successful install. No conflicts.\n**Tests:** activations table records all approvals; planner state survives.",
+      "tests": "activations table records all approvals; planner state survives.",
+      "bash_blocks": [],
+      "body_md": "### 13. Multiple catalog acquisitions in sequence\n\n**Prompts (in same chat):**\n1. *\"Wikipedia search the moon landing\"* → Knowledge\n2. *\"What's the weather in Tokyo?\"* → Geo (or OpenAPI Open-Meteo — see #18)\n3. *\"What's MSFT stock price?\"* → Finance\n\n🔧 Expected: tools panel grows with each successful install. No conflicts.\n**Tests:** activations table records all approvals; planner state survives."
+    },
+    {
+      "id": 14,
+      "section_id": "B",
+      "section_name": "Catalog acquisition",
+      "phase": "phase 2",
+      "title": "Direct catalog API",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "lists installed catalog mounts.\n**Tests:** persistence of catalog choices.\n\n---",
+      "tests": "persistence of catalog choices.",
+      "bash_blocks": [
+        "curl -s http://localhost:8765/toolsmith/artifacts | jq '.[] | select(.id | startswith(\"catalog__\"))'"
+      ],
+      "body_md": "### 14. Direct catalog API\n\n```bash\ncurl -s http://localhost:8765/toolsmith/artifacts | jq '.[] | select(.id | startswith(\"catalog__\"))'\n```\n\n✅ Expected: lists installed catalog mounts.\n**Tests:** persistence of catalog choices.\n\n---"
+    },
+    {
+      "id": 15,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Random joke",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Tell me a random joke.",
+      "expected": "- Catalog miss; OpenAPI match → `Official Joke API`\n- Toolsmith generates `get_random_joke` via the Coder, probes (URL probe + exec probe)\n- Artifact saved to `data/tools/openapi__get_random_joke/`\n- Re-ask returns a real joke",
+      "tests": "OpenAPI source + Coder + probe + persistence.",
+      "bash_blocks": [],
+      "body_md": "### 15. Random joke\n\n**Prompt:** *\"Tell me a random joke.\"*\n\n🔧 Expected:\n- Catalog miss; OpenAPI match → `Official Joke API`\n- Toolsmith generates `get_random_joke` via the Coder, probes (URL probe + exec probe)\n- Artifact saved to `data/tools/openapi__get_random_joke/`\n- Re-ask returns a real joke\n\n**Tests:** OpenAPI source + Coder + probe + persistence."
+    },
+    {
+      "id": 16,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Country information",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Tell me about France: capital, population, currency.",
+      "expected": "OpenAPI match → `Country Info API`. Path-param substitution (`/name/{name}`).\n**Tests:** path parameter handling in generated code.",
+      "tests": "path parameter handling in generated code.",
+      "bash_blocks": [],
+      "body_md": "### 16. Country information\n\n**Prompt:** *\"Tell me about France: capital, population, currency.\"*\n\n🔧 Expected: OpenAPI match → `Country Info API`. Path-param substitution (`/name/{name}`).\n**Tests:** path parameter handling in generated code."
+    },
+    {
+      "id": 17,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Open-Meteo weather",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's the current weather at lat 35.67, lon 139.65?",
+      "expected": "OpenAPI match → Open-Meteo. No auth needed.\n**Tests:** numeric parameters; multi-param GET.",
+      "tests": "numeric parameters; multi-param GET.",
+      "bash_blocks": [],
+      "body_md": "### 17. Open-Meteo weather\n\n**Prompt:** *\"What's the current weather at lat 35.67, lon 139.65?\"*\n\n🔧 Expected: OpenAPI match → Open-Meteo. No auth needed.\n**Tests:** numeric parameters; multi-param GET."
+    },
+    {
+      "id": 18,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Multiple no-auth tools coexist",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`extra_tool_count >= 3`. All three coexist in cuga.\n**Tests:** multiple generated tools mounted simultaneously.",
+      "tests": "multiple generated tools mounted simultaneously.",
+      "bash_blocks": [
+        "curl -s http://localhost:8000/health | jq '.extra_tool_count'"
+      ],
+      "body_md": "### 18. Multiple no-auth tools coexist\n\nAfter running 15, 16, 17:\n```bash\ncurl -s http://localhost:8000/health | jq '.extra_tool_count'\n```\n\n✅ Expected: `extra_tool_count >= 3`. All three coexist in cuga.\n**Tests:** multiple generated tools mounted simultaneously."
+    },
+    {
+      "id": 19,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Inspect a generated tool's code",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "real Python with `httpx.AsyncClient`, no extras. Function name matches.\n**Tests:** Coder output quality; artifact format.",
+      "tests": "Coder output quality; artifact format.",
+      "bash_blocks": [
+        "docker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_random_joke/tool.py"
+      ],
+      "body_md": "### 19. Inspect a generated tool's code\n\n```bash\ndocker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_random_joke/tool.py\n```\n\n✅ Expected: real Python with `httpx.AsyncClient`, no extras. Function name matches.\n**Tests:** Coder output quality; artifact format."
+    },
+    {
+      "id": 20,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Probe rejects a broken endpoint",
+      "verdict": "fail_cleanly",
+      "verdict_label": "Should fail cleanly",
+      "prompt": "Tell me a random joke.",
+      "expected": "probe fails (`http 404` or similar). Artifact NOT registered. UI shows amber failure card.\n**Tests:** probe gate filters broken tools.",
+      "tests": "probe gate filters broken tools.",
+      "bash_blocks": [
+        "docker compose restart chief-of-staff-toolsmith"
+      ],
+      "body_md": "### 20. Probe rejects a broken endpoint\n\nEdit `spec_index.yaml` to change the joke path to `/nonexistent`, restart toolsmith:\n```bash\ndocker compose restart chief-of-staff-toolsmith\n```\n**Prompt:** *\"Tell me a random joke.\"*\n\n❌ Expected: probe fails (`http 404` or similar). Artifact NOT registered. UI shows amber failure card.\n**Tests:** probe gate filters broken tools."
+    },
+    {
+      "id": 21,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "Use the same tool twice in one chat",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "cuga calls the same tool twice. Tools panel doesn't grow on the second ask.\n**Tests:** tool reuse without re-acquisition.",
+      "tests": "tool reuse without re-acquisition.",
+      "bash_blocks": [],
+      "body_md": "### 21. Use the same tool twice in one chat\n\nAfter installing the joke tool:\n**Prompts:**\n1. *\"Tell me a joke.\"* → real joke\n2. *\"Tell me another joke.\"* → another real joke (no new acquisition)\n\n✅ Expected: cuga calls the same tool twice. Tools panel doesn't grow on the second ask.\n**Tests:** tool reuse without re-acquisition."
+    },
+    {
+      "id": 22,
+      "section_id": "C",
+      "section_name": "OpenAPI no-auth tools",
+      "phase": "phase 3",
+      "title": "APIs.guru search (LLM path only)",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Convert 100 USD to JPY.",
+      "expected": "",
+      "tests": "apis.guru integration in the ReAct path.",
+      "bash_blocks": [],
+      "body_md": "### 22. APIs.guru search (LLM path only)\n\nWith `TOOLSMITH_LLM_PROVIDER=rits` set:\n**Prompt:** *\"Convert 100 USD to JPY.\"*\n\n🔧 Expected (with LLM): Toolsmith ReAct calls `search_apis_guru_directory`, finds e.g. Frankfurter. Builds tool.\n❌ Expected (no LLM): falls through to deterministic; no match.\n**Tests:** apis.guru integration in the ReAct path.\n\n---"
+    },
+    {
+      "id": 23,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "GitHub bearer-token auth",
+      "verdict": "needs_creds",
+      "verdict_label": "Should request credentials",
+      "prompt": "Search GitHub for popular Python repositories.",
+      "expected": "- OpenAPI match → `GitHub Search API`\n- Credential prompt asks for `github_token`\n- Provide a real PAT (any token; public search needs no scope)\n- Re-ask: real repo list",
+      "tests": "bearer_token auth scheme; vault put; secret injection at call time.",
+      "bash_blocks": [],
+      "body_md": "### 23. GitHub bearer-token auth\n\n**Prompt:** *\"Search GitHub for popular Python repositories.\"*\n\n🔐 Expected:\n- OpenAPI match → `GitHub Search API`\n- Credential prompt asks for `github_token`\n- Provide a real PAT (any token; public search needs no scope)\n- Re-ask: real repo list\n\n**Tests:** bearer_token auth scheme; vault put; secret injection at call time."
+    },
+    {
+      "id": 24,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "OpenWeather query-param auth",
+      "verdict": "needs_creds",
+      "verdict_label": "Should request credentials",
+      "prompt": "What's the current weather in Tokyo using OpenWeather?",
+      "expected": "- Credential prompt asks for `openweather_api_key`\n- Provide a real key (free at openweathermap.org)\n- Re-ask: real current weather",
+      "tests": "api_key_query auth scheme.",
+      "bash_blocks": [],
+      "body_md": "### 24. OpenWeather query-param auth\n\n**Prompt:** *\"What's the current weather in Tokyo using OpenWeather?\"*\n\n🔐 Expected:\n- Credential prompt asks for `openweather_api_key`\n- Provide a real key (free at openweathermap.org)\n- Re-ask: real current weather\n\n**Tests:** api_key_query auth scheme."
+    },
+    {
+      "id": 25,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Inspect generated auth-aware code",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "function signature ends with `, github_token: str`. Body uses `Authorization: Bearer ${github_token}` header.\n**Tests:** Coder honors auth scheme.",
+      "tests": "Coder honors auth scheme.",
+      "bash_blocks": [
+        "docker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__github_search_repos/tool.py"
+      ],
+      "body_md": "### 25. Inspect generated auth-aware code\n\n```bash\ndocker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__github_search_repos/tool.py\n```\n\n✅ Expected: function signature ends with `, github_token: str`. Body uses `Authorization: Bearer ${github_token}` header.\n**Tests:** Coder honors auth scheme."
+    },
+    {
+      "id": 26,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Vault list-keys (no values)",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{\"tool_id\":..., \"keys\": [\"github_token\"], \"backend\": \"sqlite\"}`. Values never returned.\n**Tests:** vault privacy.",
+      "tests": "vault privacy.",
+      "bash_blocks": [
+        "curl -s http://localhost:8765/vault/keys/openapi__github_search_repos | jq"
+      ],
+      "body_md": "### 26. Vault list-keys (no values)\n\n```bash\ncurl -s http://localhost:8765/vault/keys/openapi__github_search_repos | jq\n```\n\n✅ Expected: `{\"tool_id\":..., \"keys\": [\"github_token\"], \"backend\": \"sqlite\"}`. Values never returned.\n**Tests:** vault privacy."
+    },
+    {
+      "id": 27,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Programmatic vault put",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{\"stored\":true, ...}`. Asking the weather question now skips the credential prompt.\n**Tests:** vault API; backend resync after vault change.",
+      "tests": "vault API; backend resync after vault change.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8765/vault/secret \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__openweather_current\",\"secret_key\":\"openweather_api_key\",\"value\":\"YOUR_KEY\"}'"
+      ],
+      "body_md": "### 27. Programmatic vault put\n\n```bash\ncurl -s -X POST http://localhost:8765/vault/secret \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__openweather_current\",\"secret_key\":\"openweather_api_key\",\"value\":\"YOUR_KEY\"}'\n```\n\n✅ Expected: `{\"stored\":true, ...}`. Asking the weather question now skips the credential prompt.\n**Tests:** vault API; backend resync after vault change."
+    },
+    {
+      "id": 28,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Bad credentials fail cleanly",
+      "verdict": "fail_cleanly",
+      "verdict_label": "Should fail cleanly",
+      "prompt": null,
+      "expected": "cuga calls the tool, GitHub returns 401, the tool errors. UI shows the error in the chat. **System does not crash.**\n**Tests:** error propagation from generated code.",
+      "tests": "error propagation from generated code.",
+      "bash_blocks": [],
+      "body_md": "### 28. Bad credentials fail cleanly\n\nProvide a fake GitHub token. Re-ask the GitHub question.\n\n❌ Expected: cuga calls the tool, GitHub returns 401, the tool errors. UI shows the error in the chat. **System does not crash.**\n**Tests:** error propagation from generated code."
+    },
+    {
+      "id": 29,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Hostile imports rejected",
+      "verdict": "edge_case",
+      "verdict_label": "Edge case",
+      "prompt": null,
+      "expected": "adapter logs `Artifact 'manual__danger' rejected: disallowed import: 'subprocess'`. Tool registers as a stub that errors on call.\n**Tests:** import allowlist sandbox.",
+      "tests": "import allowlist sandbox.",
+      "bash_blocks": [],
+      "body_md": "### 29. Hostile imports rejected\n\nManually drop a malicious artifact (per the README's Test 5 sandbox check).\n\n⚠️ Expected: adapter logs `Artifact 'manual__danger' rejected: disallowed import: 'subprocess'`. Tool registers as a stub that errors on call.\n**Tests:** import allowlist sandbox."
+    },
+    {
+      "id": 30,
+      "section_id": "D",
+      "section_name": "Authenticated APIs",
+      "phase": "phase 3.6",
+      "title": "Persistence across restart",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "counts unchanged. The vault still has the secret. The tool still works.\n**Tests:** full persistence chain (vault + artifacts + reload).\n\n---",
+      "tests": "full persistence chain (vault + artifacts + reload).",
+      "bash_blocks": [
+        "docker compose restart chief-of-staff-backend chief-of-staff-adapter\nsleep 30\ncurl -s http://localhost:8000/health | jq '.extra_tool_count, .tools_with_secrets'"
+      ],
+      "body_md": "### 30. Persistence across restart\n\nBuild any auth tool. Then:\n```bash\ndocker compose restart chief-of-staff-backend chief-of-staff-adapter\nsleep 30\ncurl -s http://localhost:8000/health | jq '.extra_tool_count, .tools_with_secrets'\n```\n\n✅ Expected: counts unchanged. The vault still has the secret. The tool still works.\n**Tests:** full persistence chain (vault + artifacts + reload).\n\n---"
+    },
+    {
+      "id": 31,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "Gmail send needs four credentials",
+      "verdict": "needs_creds",
+      "verdict_label": "Should request credentials",
+      "prompt": "Send an email through Gmail.",
+      "expected": "credential prompt has FOUR fields:\n- `gmail_access_token`\n- `gmail_refresh_token`\n- `google_oauth_client_id`\n- `google_oauth_client_secret`\n\nHelp text walks through obtaining them via the OAuth playground.\n**Tests:** oauth2_token auth scheme; multi-secret prompt.",
+      "tests": "oauth2_token auth scheme; multi-secret prompt.",
+      "bash_blocks": [],
+      "body_md": "### 31. Gmail send needs four credentials\n\n**Prompt:** *\"Send an email through Gmail.\"*\n\n🔐 Expected: credential prompt has FOUR fields:\n- `gmail_access_token`\n- `gmail_refresh_token`\n- `google_oauth_client_id`\n- `google_oauth_client_secret`\n\nHelp text walks through obtaining them via the OAuth playground.\n**Tests:** oauth2_token auth scheme; multi-secret prompt."
+    },
+    {
+      "id": 32,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "After OAuth setup, send a test email",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Send a test email to myself with subject 'hello' and body 'this is a test'.",
+      "expected": "cuga constructs the RFC 2822 message, base64-encodes it, calls `gmail_send_message`. Real email arrives.\n**Tests:** end-to-end OAuth2 flow + Gmail API.",
+      "tests": "end-to-end OAuth2 flow + Gmail API.",
+      "bash_blocks": [],
+      "body_md": "### 32. After OAuth setup, send a test email\n\nAfter providing the four secrets:\n**Prompt:** *\"Send a test email to myself with subject 'hello' and body 'this is a test'.\"*\n\n🔧 Expected: cuga constructs the RFC 2822 message, base64-encodes it, calls `gmail_send_message`. Real email arrives.\n**Tests:** end-to-end OAuth2 flow + Gmail API."
+    },
+    {
+      "id": 33,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "Token refresh on 401",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": null,
+      "expected": "- First call gets 401 from Gmail\n- Adapter posts to `https://oauth2.googleapis.com/token` with the refresh token\n- Receives a new access token, retries, succeeds\n- Vault now has the fresh token",
+      "tests": "OAuth2 refresh path.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8765/vault/secret \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__gmail_send_message\",\"secret_key\":\"gmail_access_token\",\"value\":\"definitely_expired\"}'",
+        "docker logs cuga-apps-cos-adapter --tail 30 | grep OAuth2\n# → \"OAuth2 refresh succeeded for 'openapi__gmail_send_message'\""
+      ],
+      "body_md": "### 33. Token refresh on 401\n\nForce-expire the access token:\n```bash\ncurl -s -X POST http://localhost:8765/vault/secret \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__gmail_send_message\",\"secret_key\":\"gmail_access_token\",\"value\":\"definitely_expired\"}'\n```\n\nTry sending an email again.\n\n🔧 Expected:\n- First call gets 401 from Gmail\n- Adapter posts to `https://oauth2.googleapis.com/token` with the refresh token\n- Receives a new access token, retries, succeeds\n- Vault now has the fresh token\n\n```bash\ndocker logs cuga-apps-cos-adapter --tail 30 | grep OAuth2\n# → \"OAuth2 refresh succeeded for 'openapi__gmail_send_message'\"\n```\n\n**Tests:** OAuth2 refresh path."
+    },
+    {
+      "id": 34,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "Google Calendar list events",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's on my Google Calendar this week?",
+      "expected": "cuga calls `gcal_list_events` with `timeMin/timeMax`, returns real events.\n**Tests:** OAuth2 scheme reuse across multiple endpoints.",
+      "tests": "OAuth2 scheme reuse across multiple endpoints.",
+      "bash_blocks": [],
+      "body_md": "### 34. Google Calendar list events\n\nAfter installing GCal (same OAuth playground, `calendar.events` scope):\n**Prompt:** *\"What's on my Google Calendar this week?\"*\n\n🔧 Expected: cuga calls `gcal_list_events` with `timeMin/timeMax`, returns real events.\n**Tests:** OAuth2 scheme reuse across multiple endpoints."
+    },
+    {
+      "id": 35,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "Multi-tool composition (Gmail + GCal)",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's on my calendar tomorrow? Send me an email summary.",
+      "expected": "- Cuga calls `gcal_list_events` (tomorrow's range)\n- Constructs an email with the events\n- Calls `gmail_send_message`\n- Both tools used in a single conversation, no extra acquisitions",
+      "tests": "cuga composes multiple acquired tools.",
+      "bash_blocks": [],
+      "body_md": "### 35. Multi-tool composition (Gmail + GCal)\n\nAfter installing both:\n**Prompt:** *\"What's on my calendar tomorrow? Send me an email summary.\"*\n\n🔧 Expected:\n- Cuga calls `gcal_list_events` (tomorrow's range)\n- Constructs an email with the events\n- Calls `gmail_send_message`\n- Both tools used in a single conversation, no extra acquisitions\n\n**Tests:** cuga composes multiple acquired tools."
+    },
+    {
+      "id": 36,
+      "section_id": "E",
+      "section_name": "OAuth2",
+      "phase": "phase 3.7",
+      "title": "OAuth2 secrets persist correctly",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "rows for both gmail and gcal, listing all four secret keys each.\n**Tests:** vault index integrity for OAuth2.\n\n---",
+      "tests": "vault index integrity for OAuth2.",
+      "bash_blocks": [
+        "docker exec cuga-apps-cos-toolsmith \\\n  sqlite3 /app/chief_of_staff/data/vault.sqlite \\\n  \"SELECT tool_id, secret_key FROM secret_keys ORDER BY tool_id\""
+      ],
+      "body_md": "### 36. OAuth2 secrets persist correctly\n\n```bash\ndocker exec cuga-apps-cos-toolsmith \\\n  sqlite3 /app/chief_of_staff/data/vault.sqlite \\\n  \"SELECT tool_id, secret_key FROM secret_keys ORDER BY tool_id\"\n```\n\n✅ Expected: rows for both gmail and gcal, listing all four secret keys each.\n**Tests:** vault index integrity for OAuth2.\n\n---"
+    },
+    {
+      "id": 37,
+      "section_id": "F",
+      "section_name": "Code-revise loop",
+      "phase": "phase 3.8",
+      "title": "Force a probe failure to trigger revision",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Open-Meteo current temperature for lat 0, lon 0.",
+      "expected": "- URL probe passes (api.open-meteo.com is reachable)\n- Exec probe fails: 404 from the wrong path\n- Coder asked to revise; given the 404 + response excerpt\n- Coder emits a fixed path; re-probe passes\n- Tool registers",
+      "tests": "Coder.revise_tool path; probe feedback threading.",
+      "bash_blocks": [
+        "docker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_open_meteo_forecast/manifest.yaml \\\n  | grep -A 10 revisions\n# revisions:\n#   - {attempt: 0, ok: false, reason: 'upstream http 404'}\n#   - {attempt: 1, ok: true, ...}"
+      ],
+      "body_md": "### 37. Force a probe failure to trigger revision\n\nEdit spec_index.yaml — change open-meteo's path to `/forecastz` (typo). Restart toolsmith.\n\n**Prompt:** *\"Open-Meteo current temperature for lat 0, lon 0.\"*\n\n🔧 Expected:\n- URL probe passes (api.open-meteo.com is reachable)\n- Exec probe fails: 404 from the wrong path\n- Coder asked to revise; given the 404 + response excerpt\n- Coder emits a fixed path; re-probe passes\n- Tool registers\n\n```bash\ndocker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_open_meteo_forecast/manifest.yaml \\\n  | grep -A 10 revisions\n# revisions:\n#   - {attempt: 0, ok: false, reason: 'upstream http 404'}\n#   - {attempt: 1, ok: true, ...}\n```\n\n**Tests:** Coder.revise_tool path; probe feedback threading."
+    },
+    {
+      "id": 38,
+      "section_id": "F",
+      "section_name": "Code-revise loop",
+      "phase": "phase 3.8",
+      "title": "Hopeless code → give up after max attempts",
+      "verdict": "fail_cleanly",
+      "verdict_label": "Should fail cleanly",
+      "prompt": null,
+      "expected": "`success: false`, summary mentions \"after 3 revision(s)\". No artifact.\n**Tests:** revise loop is bounded.",
+      "tests": "revise loop is bounded.",
+      "bash_blocks": [],
+      "body_md": "### 38. Hopeless code → give up after max attempts\n\nConstruct a spec entry where the URL is fundamentally broken. Toolsmith should retry 3 times then give up.\n\n❌ Expected: `success: false`, summary mentions \"after 3 revision(s)\". No artifact.\n**Tests:** revise loop is bounded."
+    },
+    {
+      "id": 39,
+      "section_id": "F",
+      "section_name": "Code-revise loop",
+      "phase": "phase 3.8",
+      "title": "Revisions visible in artifact",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "array of `{attempt, ok, reason}` entries.\n**Tests:** provenance persistence.",
+      "tests": "provenance persistence.",
+      "bash_blocks": [
+        "curl -s http://localhost:8001/tools/openapi__get_open_meteo_forecast | jq '.provenance.revisions'"
+      ],
+      "body_md": "### 39. Revisions visible in artifact\n\nFor any tool that succeeded after one revision:\n```bash\ncurl -s http://localhost:8001/tools/openapi__get_open_meteo_forecast | jq '.provenance.revisions'\n```\n\n✅ Expected: array of `{attempt, ok, reason}` entries.\n**Tests:** provenance persistence."
+    },
+    {
+      "id": 40,
+      "section_id": "F",
+      "section_name": "Code-revise loop",
+      "phase": "phase 3.8",
+      "title": "Coder A/B comparison",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "code generated by Claude is generally cleaner / more idiomatic. `provenance.coder == \"claude\"`.\n**Tests:** Coder swappability mid-run.\n\n---",
+      "tests": "Coder swappability mid-run.",
+      "bash_blocks": [
+        "TOOLSMITH_CODER=claude docker compose up -d chief-of-staff-toolsmith\nsleep 5\ncurl -s http://localhost:8765/toolsmith/artifacts/openapi__get_random_joke\ndocker exec cuga-apps-cos-toolsmith \\\n  rm -rf /app/chief_of_staff/data/tools/openapi__get_random_joke\n# Re-ask \"Tell me a random joke\" — Claude builds it this time.\ndocker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_random_joke/tool.py"
+      ],
+      "body_md": "### 40. Coder A/B comparison\n\n```bash\nTOOLSMITH_CODER=claude docker compose up -d chief-of-staff-toolsmith\nsleep 5\ncurl -s http://localhost:8765/toolsmith/artifacts/openapi__get_random_joke\ndocker exec cuga-apps-cos-toolsmith \\\n  rm -rf /app/chief_of_staff/data/tools/openapi__get_random_joke\n# Re-ask \"Tell me a random joke\" — Claude builds it this time.\ndocker exec cuga-apps-cos-toolsmith \\\n  cat /app/chief_of_staff/data/tools/openapi__get_random_joke/tool.py\n```\n\n✅ Expected: code generated by Claude is generally cleaner / more idiomatic. `provenance.coder == \"claude\"`.\n**Tests:** Coder swappability mid-run.\n\n---"
+    },
+    {
+      "id": 41,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "Hacker News scrape",
+      "verdict": "browser",
+      "verdict_label": "Should drive the browser",
+      "prompt": "What are the top 5 stories on Hacker News right now?",
+      "expected": "- Catalog and OpenAPI sources miss\n- BrowserSource matches `hn_top_stories`\n- Toolsmith probes via browser-runner: opens news.ycombinator.com, extracts titles\n- Probe passes → registers\n- Tools panel shows `hn_top_stories` (kind: browser_task)\n- Re-ask returns the actual current top stories",
+      "tests": "end-to-end browser tool path; phase-4 happy case.",
+      "bash_blocks": [],
+      "body_md": "### 41. Hacker News scrape\n\n**Prompt:** *\"What are the top 5 stories on Hacker News right now?\"*\n\n🌐 Expected:\n- Catalog and OpenAPI sources miss\n- BrowserSource matches `hn_top_stories`\n- Toolsmith probes via browser-runner: opens news.ycombinator.com, extracts titles\n- Probe passes → registers\n- Tools panel shows `hn_top_stories` (kind: browser_task)\n- Re-ask returns the actual current top stories\n\n**Tests:** end-to-end browser tool path; phase-4 happy case."
+    },
+    {
+      "id": 42,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "Wikipedia website search (vs. API)",
+      "verdict": "browser",
+      "verdict_label": "Should drive the browser",
+      "prompt": "Search Wikipedia website for 'quantum computing'.",
+      "expected": "BrowserSource match → opens en.wikipedia.org/wiki/Special:Search, extracts result text.\n**Tests:** browser tool with parameter substitution (`${query}` in URL).",
+      "tests": "browser tool with parameter substitution (`${query}` in URL).",
+      "bash_blocks": [],
+      "body_md": "### 42. Wikipedia website search (vs. API)\n\n**Prompt:** *\"Search Wikipedia website for 'quantum computing'.\"*\n\n🌐 Expected: BrowserSource match → opens en.wikipedia.org/wiki/Special:Search, extracts result text.\n**Tests:** browser tool with parameter substitution (`${query}` in URL)."
+    },
+    {
+      "id": 43,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "GitHub repo About without a token",
+      "verdict": "browser",
+      "verdict_label": "Should drive the browser",
+      "prompt": "What's the About text and star count for the python/cpython GitHub repo?",
+      "expected": "BrowserSource match → `github_repo_about` (no auth needed; scrapes the page).\n\n> Note: the system prefers the OpenAPI GitHub Search API for queries that match its capabilities. This one specifically asks about the *About text* and *stars on a specific repo* — features that the search API doesn't expose well — so the browser source wins.",
+      "tests": "routing — browser source wins when API source isn't a great fit.",
+      "bash_blocks": [],
+      "body_md": "### 43. GitHub repo About without a token\n\n**Prompt:** *\"What's the About text and star count for the python/cpython GitHub repo?\"*\n\n🌐 Expected: BrowserSource match → `github_repo_about` (no auth needed; scrapes the page).\n\n> Note: the system prefers the OpenAPI GitHub Search API for queries that match its capabilities. This one specifically asks about the *About text* and *stars on a specific repo* — features that the search API doesn't expose well — so the browser source wins.\n\n**Tests:** routing — browser source wins when API source isn't a great fit."
+    },
+    {
+      "id": 44,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "School portal login (template demo)",
+      "verdict": "needs_creds",
+      "verdict_label": "Should request credentials",
+      "prompt": "Check my kid's school portal for grades.",
+      "expected": "BrowserSource match → `school_portal_grades`. Requires `school_portal_username` + `school_portal_password`. Credential prompt asks for both.\n\n> The bundled template uses `https://example.school.example.com/login` — fictional. To make this actually work, copy the template, edit selectors for your real school portal. **The auth prompt + browser dispatch flow works regardless.**",
+      "tests": "browser tool with auth; template adaptability.",
+      "bash_blocks": [],
+      "body_md": "### 44. School portal login (template demo)\n\n**Prompt:** *\"Check my kid's school portal for grades.\"*\n\n🔐🌐 Expected: BrowserSource match → `school_portal_grades`. Requires `school_portal_username` + `school_portal_password`. Credential prompt asks for both.\n\n> The bundled template uses `https://example.school.example.com/login` — fictional. To make this actually work, copy the template, edit selectors for your real school portal. **The auth prompt + browser dispatch flow works regardless.**\n\n**Tests:** browser tool with auth; template adaptability."
+    },
+    {
+      "id": 45,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "user_confirm pause",
+      "verdict": "browser",
+      "verdict_label": "Should drive the browser",
+      "prompt": "Submit the form at https://httpbin.org/forms/post with my approval.",
+      "expected": "- BrowserSource match → `form_submit_with_confirm`\n- Browser-runner navigates, fills form, **pauses** at the `user_confirm` step\n- A webhook fires to `chief-of-staff-backend:8765/internal/browser_confirm`\n- For now, default-deny (no UI yet for the prompt — see \"Honest gap\" below)",
+      "tests": "human-in-the-loop pattern; webhook path.",
+      "bash_blocks": [],
+      "body_md": "### 45. user_confirm pause\n\n**Prompt:** *\"Submit the form at https://httpbin.org/forms/post with my approval.\"*\n\n🌐⚠️ Expected:\n- BrowserSource match → `form_submit_with_confirm`\n- Browser-runner navigates, fills form, **pauses** at the `user_confirm` step\n- A webhook fires to `chief-of-staff-backend:8765/internal/browser_confirm`\n- For now, default-deny (no UI yet for the prompt — see \"Honest gap\" below)\n\n**Tests:** human-in-the-loop pattern; webhook path."
+    },
+    {
+      "id": 46,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "Browser-runner direct probe",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{\"ok\":true,\"reason\":\"completed\",...}`. The runner handles probes independently of toolsmith.\n**Tests:** browser-runner is an independent service.",
+      "tests": "browser-runner is an independent service.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8002/probe \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"steps\":[{\"go_to\":\"https://news.ycombinator.com\"},{\"wait_for_selector\":\"tr.athing\"}],\"sample_input\":{}}'"
+      ],
+      "body_md": "### 46. Browser-runner direct probe\n\n```bash\ncurl -s -X POST http://localhost:8002/probe \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"steps\":[{\"go_to\":\"https://news.ycombinator.com\"},{\"wait_for_selector\":\"tr.athing\"}],\"sample_input\":{}}'\n```\n\n✅ Expected: `{\"ok\":true,\"reason\":\"completed\",...}`. The runner handles probes independently of toolsmith.\n**Tests:** browser-runner is an independent service."
+    },
+    {
+      "id": 47,
+      "section_id": "G",
+      "section_name": "Browser tools",
+      "phase": "phase 4",
+      "title": "Browser session persistence",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "profiles persist via the Docker volume. Subsequent invocations of logged-in tools reuse cookies (no re-login).\n**Tests:** browser-runner volume persistence.\n\n---",
+      "tests": "browser-runner volume persistence.",
+      "bash_blocks": [
+        "docker exec cuga-apps-cos-browser ls /data/profiles/\n# → directory per provider used (default, school_portal, etc.)\n\ndocker compose restart chief-of-staff-browser\nsleep 10\ndocker exec cuga-apps-cos-browser ls /data/profiles/\n# → same directories; cookies survived"
+      ],
+      "body_md": "### 47. Browser session persistence\n\nAfter running a tool that logs in:\n```bash\ndocker exec cuga-apps-cos-browser ls /data/profiles/\n# → directory per provider used (default, school_portal, etc.)\n\ndocker compose restart chief-of-staff-browser\nsleep 10\ndocker exec cuga-apps-cos-browser ls /data/profiles/\n# → same directories; cookies survived\n```\n\n✅ Expected: profiles persist via the Docker volume. Subsequent invocations of logged-in tools reuse cookies (no re-login).\n**Tests:** browser-runner volume persistence.\n\n---"
+    },
+    {
+      "id": 48,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Truly unsupported request",
+      "verdict": "fail_cleanly",
+      "verdict_label": "Should fail cleanly",
+      "prompt": "Place a Whole Foods order for me using my Amazon account.",
+      "expected": "- Catalog miss\n- OpenAPI miss (no consumer Amazon API)\n- Browser source has nothing for \"place an order on Amazon\" (not in the curated index, ToS reasons)\n- UI shows amber \"Toolsmith couldn't build a tool — No catalog, OpenAPI, or browser-task match for this gap\"",
+      "tests": "honest \"I can't do this\" surface.",
+      "bash_blocks": [],
+      "body_md": "### 48. Truly unsupported request\n\n**Prompt:** *\"Place a Whole Foods order for me using my Amazon account.\"*\n\n❌ Expected:\n- Catalog miss\n- OpenAPI miss (no consumer Amazon API)\n- Browser source has nothing for \"place an order on Amazon\" (not in the curated index, ToS reasons)\n- UI shows amber \"Toolsmith couldn't build a tool — No catalog, OpenAPI, or browser-task match for this gap\"\n\n**Tests:** honest \"I can't do this\" surface."
+    },
+    {
+      "id": 49,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Cuga is down",
+      "verdict": "edge_case",
+      "verdict_label": "Edge case",
+      "prompt": "Hello",
+      "expected": "backend stub-fallback responds with `[stub:cuga-unreachable] echo: hello`. UI header shows `agent: stub`. Bring it back: normal operation resumes.\n**Tests:** graceful degradation.",
+      "tests": "graceful degradation.",
+      "bash_blocks": [
+        "docker stop cuga-apps-cos-adapter"
+      ],
+      "body_md": "### 49. Cuga is down\n\n```bash\ndocker stop cuga-apps-cos-adapter\n```\n**Prompt:** *\"Hello\"*\n\n⚠️ Expected: backend stub-fallback responds with `[stub:cuga-unreachable] echo: hello`. UI header shows `agent: stub`. Bring it back: normal operation resumes.\n**Tests:** graceful degradation."
+    },
+    {
+      "id": 50,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Toolsmith is down",
+      "verdict": "edge_case",
+      "verdict_label": "Edge case",
+      "prompt": null,
+      "expected": "backend's acquire call fails; chat response includes `acquisition: {success: false, summary: \"toolsmith unreachable: ...\"}`. Cuga still answers from its existing tools.\n**Tests:** graceful degradation when Toolsmith is unreachable.",
+      "tests": "graceful degradation when Toolsmith is unreachable.",
+      "bash_blocks": [
+        "docker stop cuga-apps-cos-toolsmith"
+      ],
+      "body_md": "### 50. Toolsmith is down\n\n```bash\ndocker stop cuga-apps-cos-toolsmith\n```\nTrigger any gap.\n\n⚠️ Expected: backend's acquire call fails; chat response includes `acquisition: {success: false, summary: \"toolsmith unreachable: ...\"}`. Cuga still answers from its existing tools.\n**Tests:** graceful degradation when Toolsmith is unreachable."
+    },
+    {
+      "id": 51,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Browser-runner is down",
+      "verdict": "edge_case",
+      "verdict_label": "Edge case",
+      "prompt": null,
+      "expected": "Toolsmith's probe to the runner fails. Toolsmith logs the failure but **falls through to register without probing** — the tool will work once the runner is back. (Tradeoff: phase 4 v1 is permissive about probe failures so the system stays usable when the runner is briefly down.)\n**Tests:** runner-down resilience.",
+      "tests": "runner-down resilience.",
+      "bash_blocks": [
+        "docker stop cuga-apps-cos-browser"
+      ],
+      "body_md": "### 51. Browser-runner is down\n\n```bash\ndocker stop cuga-apps-cos-browser\n```\nTrigger a browser tool gap (e.g. *\"Top Hacker News stories\"*).\n\n⚠️ Expected: Toolsmith's probe to the runner fails. Toolsmith logs the failure but **falls through to register without probing** — the tool will work once the runner is back. (Tradeoff: phase 4 v1 is permissive about probe failures so the system stays usable when the runner is briefly down.)\n**Tests:** runner-down resilience."
+    },
+    {
+      "id": 52,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Concurrent acquisitions (race)",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "both succeed. No artifact corruption. Tools panel shows both eventually.\n**Tests:** concurrent /acquire (Toolsmith holds a lock during agent rebuild).",
+      "tests": "concurrent /acquire (Toolsmith holds a lock during agent rebuild).",
+      "bash_blocks": [],
+      "body_md": "### 52. Concurrent acquisitions (race)\n\nIn the UI, ask two tool-gap questions in rapid succession. Each should trigger a separate Toolsmith acquire.\n\n✅ Expected: both succeed. No artifact corruption. Tools panel shows both eventually.\n**Tests:** concurrent /acquire (Toolsmith holds a lock during agent rebuild)."
+    },
+    {
+      "id": 53,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Same gap asked from two browser tabs",
+      "verdict": "edge_case",
+      "verdict_label": "Edge case",
+      "prompt": null,
+      "expected": "both attempts trigger an acquire. The second sees the first's artifact already exists (or both succeed and one overwrites; idempotent). No duplicate tool entries in the registry.\n**Tests:** registry idempotence.",
+      "tests": "registry idempotence.",
+      "bash_blocks": [],
+      "body_md": "### 53. Same gap asked from two browser tabs\n\nOpen two browser tabs, ask the same uninstalled-tool question in both at the same time.\n\n⚠️ Expected: both attempts trigger an acquire. The second sees the first's artifact already exists (or both succeed and one overwrites; idempotent). No duplicate tool entries in the registry.\n**Tests:** registry idempotence."
+    },
+    {
+      "id": 54,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Remove a tool",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{removed: true}`. Tool unmounts from cuga within seconds. Tools panel updates.\n**Tests:** removal lifecycle.",
+      "tests": "removal lifecycle.",
+      "bash_blocks": [
+        "curl -s http://localhost:8765/toolsmith/artifacts | jq '.[].id'\ncurl -s -X DELETE http://localhost:8765/toolsmith/artifacts/openapi__get_random_joke"
+      ],
+      "body_md": "### 54. Remove a tool\n\n```bash\ncurl -s http://localhost:8765/toolsmith/artifacts | jq '.[].id'\ncurl -s -X DELETE http://localhost:8765/toolsmith/artifacts/openapi__get_random_joke\n```\n\n✅ Expected: `{removed: true}`. Tool unmounts from cuga within seconds. Tools panel updates.\n**Tests:** removal lifecycle."
+    },
+    {
+      "id": 55,
+      "section_id": "H",
+      "section_name": "Failure & edge cases",
+      "phase": null,
+      "title": "Vault key cleared → tool blocks",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "GitHub tool now appears in `blocked_artifacts` because its required secret is gone. Adapter unmounts it on next reload. Re-supplying the secret re-mounts.\n**Tests:** vault deletion → effective state → adapter dispatch.\n\n---",
+      "tests": "vault deletion → effective state → adapter dispatch.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8765/vault/delete \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__github_search_repos\",\"secret_key\":\"github_token\"}'\n\ncurl -s http://localhost:8001/effective_state | jq '.blocked_artifacts'"
+      ],
+      "body_md": "### 55. Vault key cleared → tool blocks\n\n```bash\ncurl -s -X POST http://localhost:8765/vault/delete \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"tool_id\":\"openapi__github_search_repos\",\"secret_key\":\"github_token\"}'\n\ncurl -s http://localhost:8001/effective_state | jq '.blocked_artifacts'\n```\n\n✅ Expected: GitHub tool now appears in `blocked_artifacts` because its required secret is gone. Adapter unmounts it on next reload. Re-supplying the secret re-mounts.\n**Tests:** vault deletion → effective state → adapter dispatch.\n\n---"
+    },
+    {
+      "id": 56,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Wikipedia + Geo",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Tell me about Tokyo: a quick history and current weather.",
+      "expected": "cuga calls `get_wikipedia_article` AND `get_weather` in one chain. One coherent response.\n**Tests:** parallel tool use within a single planner call.",
+      "tests": "parallel tool use within a single planner call.",
+      "bash_blocks": [],
+      "body_md": "### 56. Wikipedia + Geo\n\nAfter installing Knowledge MCP and Geo MCP:\n**Prompt:** *\"Tell me about Tokyo: a quick history and current weather.\"*\n\n🔧 Expected: cuga calls `get_wikipedia_article` AND `get_weather` in one chain. One coherent response.\n**Tests:** parallel tool use within a single planner call."
+    },
+    {
+      "id": 57,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Country + Weather",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's the capital of Japan and what's the weather there right now?",
+      "expected": "`get_country_by_name(name=\"Japan\")` → \"Tokyo\"; then `openweather_current(q=\"Tokyo,JP\")` or `get_weather(...)`.\n**Tests:** sequential tool use with output→input passing.",
+      "tests": "sequential tool use with output→input passing.",
+      "bash_blocks": [],
+      "body_md": "### 57. Country + Weather\n\nAfter installing both:\n**Prompt:** *\"What's the capital of Japan and what's the weather there right now?\"*\n\n🔧 Expected: `get_country_by_name(name=\"Japan\")` → \"Tokyo\"; then `openweather_current(q=\"Tokyo,JP\")` or `get_weather(...)`.\n**Tests:** sequential tool use with output→input passing."
+    },
+    {
+      "id": 58,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "GitHub + Knowledge",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Find the most popular Python ORM library on GitHub and look it up on Wikipedia.",
+      "expected": "`github_search_repos(q=\"Python ORM\")` → e.g. SQLAlchemy → `get_wikipedia_article(title=\"SQLAlchemy\")`.\n**Tests:** OpenAPI auth tool + catalog tool composition.",
+      "tests": "OpenAPI auth tool + catalog tool composition.",
+      "bash_blocks": [],
+      "body_md": "### 58. GitHub + Knowledge\n\n**Prompt:** *\"Find the most popular Python ORM library on GitHub and look it up on Wikipedia.\"*\n\n🔧 Expected: `github_search_repos(q=\"Python ORM\")` → e.g. SQLAlchemy → `get_wikipedia_article(title=\"SQLAlchemy\")`.\n**Tests:** OpenAPI auth tool + catalog tool composition."
+    },
+    {
+      "id": 59,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Web research + browser scrape",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Find the top Hacker News story right now and summarize what's discussed.",
+      "expected": "`hn_top_stories` (browser) → titles. cuga's `fetch_webpage` (built-in) → article body. cuga summarizes.\n**Tests:** browser tool + native cuga tool composition.",
+      "tests": "browser tool + native cuga tool composition.",
+      "bash_blocks": [],
+      "body_md": "### 59. Web research + browser scrape\n\nAfter installing HN browser tool:\n**Prompt:** *\"Find the top Hacker News story right now and summarize what's discussed.\"*\n\n🔧🌐 Expected: `hn_top_stories` (browser) → titles. cuga's `fetch_webpage` (built-in) → article body. cuga summarizes.\n**Tests:** browser tool + native cuga tool composition."
+    },
+    {
+      "id": 60,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Three-tool chain",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Lookup France: capital, weather there, and any Wikipedia summary.",
+      "expected": "country → weather → wikipedia → synthesized response.\n**Tests:** ≥3 tools in one chat.",
+      "tests": "≥3 tools in one chat.",
+      "bash_blocks": [],
+      "body_md": "### 60. Three-tool chain\n\n**Prompt:** *\"Lookup France: capital, weather there, and any Wikipedia summary.\"*\n\n🔧 Expected: country → weather → wikipedia → synthesized response.\n**Tests:** ≥3 tools in one chat."
+    },
+    {
+      "id": 61,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Two browser tools in one chat",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "What's the top HN story today, and tell me about whatever GitHub repo it links to.",
+      "expected": "cuga calls HN → extracts a GitHub URL → calls github_repo_about → returns combined info.\n**Tests:** browser tool composition.",
+      "tests": "browser tool composition.",
+      "bash_blocks": [],
+      "body_md": "### 61. Two browser tools in one chat\n\nAfter both `hn_top_stories` and `github_repo_about` are installed:\n**Prompt:** *\"What's the top HN story today, and tell me about whatever GitHub repo it links to.\"*\n\n🔧🌐 Expected: cuga calls HN → extracts a GitHub URL → calls github_repo_about → returns combined info.\n**Tests:** browser tool composition."
+    },
+    {
+      "id": 62,
+      "section_id": "I",
+      "section_name": "Multi-tool composition",
+      "phase": null,
+      "title": "Email digest",
+      "verdict": "auto_build",
+      "verdict_label": "Should auto-build a tool",
+      "prompt": "Summarize my upcoming week's calendar and email it to me.",
+      "expected": "gcal_list_events → cuga summarizes → gmail_send_message → real email arrives.\n**Tests:** end-to-end OAuth2 + multi-tool + real-world action.\n\n---",
+      "tests": "end-to-end OAuth2 + multi-tool + real-world action.",
+      "bash_blocks": [],
+      "body_md": "### 62. Email digest\n\nWith Gmail + GCal both installed:\n**Prompt:** *\"Summarize my upcoming week's calendar and email it to me.\"*\n\n🔧🔐 Expected: gcal_list_events → cuga summarizes → gmail_send_message → real email arrives.\n**Tests:** end-to-end OAuth2 + multi-tool + real-world action.\n\n---"
+    },
+    {
+      "id": 63,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Toolsmith /acquire direct",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "success: true, artifact_id starts with `openapi__`.\n**Tests:** Toolsmith service is independently usable.",
+      "tests": "Toolsmith service is independently usable.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8001/acquire \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"gap\":{\"capability\":\"random joke\"}}' | jq '{success, artifact_id, summary}'"
+      ],
+      "body_md": "### 63. Toolsmith /acquire direct\n\n```bash\ncurl -s -X POST http://localhost:8001/acquire \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"gap\":{\"capability\":\"random joke\"}}' | jq '{success, artifact_id, summary}'\n```\n\n✅ Expected: success: true, artifact_id starts with `openapi__`.\n**Tests:** Toolsmith service is independently usable."
+    },
+    {
+      "id": 64,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Browser-runner /execute direct",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "ok: true, extracted has `first_title` populated.\n**Tests:** browser-runner is independently usable.",
+      "tests": "browser-runner is independently usable.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8002/execute \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"steps\":[{\"go_to\":\"https://news.ycombinator.com\"},{\"extract_text\":{\"selector\":\"tr.athing td.title:nth-of-type(2)\",\"as\":\"first_title\"}}],\"inputs\":{},\"secrets\":{}}' \\\n  | jq '{ok, extracted}'"
+      ],
+      "body_md": "### 64. Browser-runner /execute direct\n\n```bash\ncurl -s -X POST http://localhost:8002/execute \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"steps\":[{\"go_to\":\"https://news.ycombinator.com\"},{\"extract_text\":{\"selector\":\"tr.athing td.title:nth-of-type(2)\",\"as\":\"first_title\"}}],\"inputs\":{},\"secrets\":{}}' \\\n  | jq '{ok, extracted}'\n```\n\n✅ Expected: ok: true, extracted has `first_title` populated.\n**Tests:** browser-runner is independently usable."
+    },
+    {
+      "id": 65,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Catalog listing",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "5 catalog entries; `active` reflects which have been installed.\n**Tests:** catalog endpoint.",
+      "tests": "catalog endpoint.",
+      "bash_blocks": [
+        "curl -s http://localhost:8765/catalog | jq '.[] | {id, name, active}'"
+      ],
+      "body_md": "### 65. Catalog listing\n\n```bash\ncurl -s http://localhost:8765/catalog | jq '.[] | {id, name, active}'\n```\n\n✅ Expected: 5 catalog entries; `active` reflects which have been installed.\n**Tests:** catalog endpoint."
+    },
+    {
+      "id": 66,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Effective state with mounted tools",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "numbers match what's installed.\n**Tests:** effective state aggregation.",
+      "tests": "effective state aggregation.",
+      "bash_blocks": [
+        "curl -s http://localhost:8001/effective_state | jq '{\n    mcp_servers: .mcp_servers,\n    extra_tools: (.extra_tools | length),\n    blocked: (.blocked_artifacts | length)\n  }'"
+      ],
+      "body_md": "### 66. Effective state with mounted tools\n\nAfter installing a few tools:\n```bash\ncurl -s http://localhost:8001/effective_state | jq '{\n    mcp_servers: .mcp_servers,\n    extra_tools: (.extra_tools | length),\n    blocked: (.blocked_artifacts | length)\n  }'\n```\n\n✅ Expected: numbers match what's installed.\n**Tests:** effective state aggregation."
+    },
+    {
+      "id": 67,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Adapter health includes secret count",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "includes `tools_with_secrets` (count of tools that have at least one secret in `_State.secrets`).\n**Tests:** adapter reports its full state.",
+      "tests": "adapter reports its full state.",
+      "bash_blocks": [
+        "curl -s http://localhost:8000/health | jq"
+      ],
+      "body_md": "### 67. Adapter health includes secret count\n\n```bash\ncurl -s http://localhost:8000/health | jq\n```\n\n✅ Expected: includes `tools_with_secrets` (count of tools that have at least one secret in `_State.secrets`).\n**Tests:** adapter reports its full state."
+    },
+    {
+      "id": 68,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Tools refresh",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{synced: N}` where N matches current tool count.\n**Tests:** registry sync from adapter.",
+      "tests": "registry sync from adapter.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8765/tools/refresh | jq"
+      ],
+      "body_md": "### 68. Tools refresh\n\n```bash\ncurl -s -X POST http://localhost:8765/tools/refresh | jq\n```\n\n✅ Expected: `{synced: N}` where N matches current tool count.\n**Tests:** registry sync from adapter."
+    },
+    {
+      "id": 69,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Browser session listing",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "per-provider profile state (exists, size_bytes).\n**Tests:** browser-runner session metadata.",
+      "tests": "browser-runner session metadata.",
+      "bash_blocks": [
+        "curl -s http://localhost:8002/sessions/default | jq\ncurl -s http://localhost:8002/sessions/school_portal | jq"
+      ],
+      "body_md": "### 69. Browser session listing\n\n```bash\ncurl -s http://localhost:8002/sessions/default | jq\ncurl -s http://localhost:8002/sessions/school_portal | jq\n```\n\n✅ Expected: per-provider profile state (exists, size_bytes).\n**Tests:** browser-runner session metadata."
+    },
+    {
+      "id": 70,
+      "section_id": "J",
+      "section_name": "Direct API surface",
+      "phase": null,
+      "title": "Clear a browser session",
+      "verdict": "should_work",
+      "verdict_label": "Should work",
+      "prompt": null,
+      "expected": "`{cleared: true, ...}`. Profile directory removed; next invocation requires re-login.\n**Tests:** session reset.\n\n---\n\n## What overall passing means\n\nIf 60+ of these 70 examples pass, the system is doing what it claims:\n\n- **Documented APIs** (any auth flavor) → Toolsmith finds, generates, probes, mounts (Sections B, C, D, E)\n- **Code-revise loop** catches flaky generation (Section F)\n- **Browser-driven tools** for sites with no API (Section G)\n- **Honest failure** when nothing fits (Section H)\n- **Composition** across tool sources in one chat (Section I)\n- **Each service is independently usable** (Section J)\n\n## Honest gap list — what these benchmarks deliberately don't test\n\n1. **OAuth2 redirect flow** — phase 3.7 ships bring-your-own-token. Real redirect UX is deferred.\n2. **Browser auto-discovery** — BrowserScriptCoder (LLM generates new browser DSL scripts on the fly) is not in v1; only curated templates.\n3. **`user_confirm` UI flow** — the webhook fires, but the backend doesn't yet surface a UI prompt. Default behavior is deny. Set `BROWSER_AUTO_CONFIRM=1` on the runner for benchmarks.\n4. **Health checks / auto-quarantine** (phase 5) — there's no daily probe; tools rot silently.\n5. **Cross-domain mining** (phase 6) — not built; nothing analyzes patterns across artifacts.\n6. **Subprocess sandboxing** — import allowlist is a tripwire, not isolation.\n7. **Multi-user / cost caps** — single user dev only.\n8. **Real Amazon / DoorDash ordering** — explicitly not bundled (ToS, captcha, payment confirmation realities).\n\nThese are the next phases (4.1+, 5, 6) — the architecture is ready for them; the features aren't built.",
+      "tests": "session reset.",
+      "bash_blocks": [
+        "curl -s -X POST http://localhost:8002/sessions/default/clear | jq"
+      ],
+      "body_md": "### 70. Clear a browser session\n\n```bash\ncurl -s -X POST http://localhost:8002/sessions/default/clear | jq\n```\n\n✅ Expected: `{cleared: true, ...}`. Profile directory removed; next invocation requires re-login.\n**Tests:** session reset.\n\n---\n\n## What overall passing means\n\nIf 60+ of these 70 examples pass, the system is doing what it claims:\n\n- **Documented APIs** (any auth flavor) → Toolsmith finds, generates, probes, mounts (Sections B, C, D, E)\n- **Code-revise loop** catches flaky generation (Section F)\n- **Browser-driven tools** for sites with no API (Section G)\n- **Honest failure** when nothing fits (Section H)\n- **Composition** across tool sources in one chat (Section I)\n- **Each service is independently usable** (Section J)\n\n## Honest gap list — what these benchmarks deliberately don't test\n\n1. **OAuth2 redirect flow** — phase 3.7 ships bring-your-own-token. Real redirect UX is deferred.\n2. **Browser auto-discovery** — BrowserScriptCoder (LLM generates new browser DSL scripts on the fly) is not in v1; only curated templates.\n3. **`user_confirm` UI flow** — the webhook fires, but the backend doesn't yet surface a UI prompt. Default behavior is deny. Set `BROWSER_AUTO_CONFIRM=1` on the runner for benchmarks.\n4. **Health checks / auto-quarantine** (phase 5) — there's no daily probe; tools rot silently.\n5. **Cross-domain mining** (phase 6) — not built; nothing analyzes patterns across artifacts.\n6. **Subprocess sandboxing** — import allowlist is a tripwire, not isolation.\n7. **Multi-user / cost caps** — single user dev only.\n8. **Real Amazon / DoorDash ordering** — explicitly not bundled (ToS, captcha, payment confirmation realities).\n\nThese are the next phases (4.1+, 5, 6) — the architecture is ready for them; the features aren't built."
+    }
+  ]
+}

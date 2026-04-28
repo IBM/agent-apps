@@ -29,6 +29,7 @@ export default function App() {
   }, [refreshHealth]);
 
   const ts = info?.toolsmith;
+  const failedExtras = info?.failed_extras ?? [];
   return (
     <div className="h-full flex flex-col bg-white">
       <header className="border-b px-4 py-3 flex items-center justify-between">
@@ -45,6 +46,19 @@ export default function App() {
           </span>
           <span>·</span>
           <span>tools: {info?.tools_registered ?? 0}</span>
+          {failedExtras.length > 0 && (
+            <>
+              <span>·</span>
+              <span
+                className="text-red-600 font-semibold"
+                title={failedExtras
+                  .map((f) => `${f.tool_name}: ${f.error_class ?? ''} ${f.error ?? ''}`)
+                  .join('\n')}
+              >
+                {failedExtras.length} failed extra{failedExtras.length > 1 ? 's' : ''}
+              </span>
+            </>
+          )}
         </div>
       </header>
       <main className="flex-1 flex overflow-hidden">

@@ -133,23 +133,36 @@ export default function Chat({ onToolsChanged }: Props) {
 
 function AcquisitionNotice({ acquisition }: { acquisition: AcquisitionResult }) {
   const ok = acquisition.success;
+  const alreadyExisted = !ok && !!acquisition.already_existed;
+
+  // Three states: built (green), already-had-it (blue), failed (amber).
+  const palette = ok
+    ? { border: 'border-green-300', bg: 'bg-green-50', title: 'text-green-900', body: 'text-green-800' }
+    : alreadyExisted
+    ? { border: 'border-blue-300', bg: 'bg-blue-50', title: 'text-blue-900', body: 'text-blue-800' }
+    : { border: 'border-amber-300', bg: 'bg-amber-50', title: 'text-amber-900', body: 'text-amber-800' };
+
+  const title = ok
+    ? 'Toolsmith built a tool'
+    : alreadyExisted
+    ? 'Tool already in your toolbox'
+    : "Toolsmith couldn't build a tool";
+
   return (
-    <div
-      className={
-        'border rounded-lg p-2 text-xs ' +
-        (ok ? 'border-green-300 bg-green-50' : 'border-amber-300 bg-amber-50')
-      }
-    >
-      <div className={'font-semibold ' + (ok ? 'text-green-900' : 'text-amber-900')}>
-        {ok ? 'Toolsmith built a tool' : 'Toolsmith couldn\'t build a tool'}
-      </div>
-      <div className={ok ? 'text-green-800' : 'text-amber-800'}>{acquisition.summary}</div>
+    <div className={`border rounded-lg p-2 text-xs ${palette.border} ${palette.bg}`}>
+      <div className={`font-semibold ${palette.title}`}>{title}</div>
+      <div className={palette.body}>{acquisition.summary}</div>
       {acquisition.artifact_id && (
         <div className="text-gray-500 mt-0.5 font-mono">{acquisition.artifact_id}</div>
       )}
       {ok && (
         <div className="text-gray-600 mt-1">
           Try asking again — the new tool is now available.
+        </div>
+      )}
+      {alreadyExisted && (
+        <div className="text-gray-600 mt-1">
+          Re-running your question against the existing tool — the answer above is from the retry.
         </div>
       )}
     </div>

@@ -91,6 +91,11 @@ class AcquireResult:
     # provided required credentials, this carries the details so the UI can
     # prompt for them. Distinct from regular failure (probe miss, etc.).
     needs_secrets: Optional[dict] = None  # {tool_id, required, missing, help}
+    # The ReAct agent looked at the existing toolbox via list_existing_tools
+    # and decided the gap is already covered. From the user's perspective
+    # this is a success — the answer should flow on retry, not "couldn't
+    # build a tool." UI uses this flag to render a different card.
+    already_existed: bool = False
 
 
 class Toolsmith:
@@ -287,11 +292,19 @@ class Toolsmith:
             # and there's no way to unblock.
             needs = _last_needs_secrets(transcript)
             summary = _final_message(result) or "Toolsmith did not register a tool."
+
+            # The agent may have looked at list_existing_tools and decided
+            # the gap is already covered. That's not a failure — the
+            # toolbox already does what was asked; the user just needs to
+            # retry the original prompt. Flag it so the UI can render a
+            # different card (and the orchestrator can auto-retry).
+            already = needs is None and _looks_like_already_existed(transcript, summary)
             return AcquireResult(
                 success=False, artifact_id=None,
                 summary=summary,
                 transcript=transcript,
                 needs_secrets=needs,
+                already_existed=already,
             )
         return AcquireResult(success=True, artifact_id=artifact_id,
                              summary=_final_message(result),
@@ -552,6 +565,39 @@ def _final_message(react_result: Any) -> str:
     if not msgs:
         return ""
     return str(getattr(msgs[-1], "content", ""))
+
+
+_ALREADY_EXISTED_HINTS = (
+    "already covered",
+    "already exists",
+    "already have",
+    "already installed",
+    "already registered",
+    "no new tool needed",
+    "no new tool is needed",
+    "covered by the existing",
+)
+
+
+def _looks_like_already_existed(transcript: list[dict], summary: str) -> bool:
+    """Heuristic: did the agent decide the gap is already filled by an
+    existing tool? Two signals must line up — the agent called
+    list_existing_tools (so it actually looked) and the final message
+    sounds like 'already covered'. Both conditions guard against false
+    positives where the agent just gave up or hit an unrelated error."""
+    blob = (summary or "").lower()
+    if not any(hint in blob for hint in _ALREADY_EXISTED_HINTS):
+        return False
+    looked_at_existing = False
+    for entry in transcript:
+        c = entry.get("content", "")
+        if isinstance(c, str) and "list_existing_tools" in c:
+            looked_at_existing = True
+            break
+        # tool messages from list_existing_tools tend to be a JSON array.
+        # We don't strictly require the lookup to have happened — the
+        # final message hint is the stronger signal — so fall back gracefully.
+    return looked_at_existing or "already covered" in blob
 
 
 def _last_needs_secrets(transcript: list[dict]) -> Optional[dict]:

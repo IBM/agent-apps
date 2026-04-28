@@ -14,6 +14,7 @@ export interface AcquisitionResult {
   summary: string;
   transcript: { role: string; content: string }[];
   needs_secrets: NeedsSecrets | null;
+  already_existed?: boolean;
 }
 
 export interface ToolCall {
@@ -47,11 +48,19 @@ export interface ToolsmithHealth {
   artifact_count?: number;
 }
 
+export interface FailedExtra {
+  tool_name: string;
+  artifact_id?: string | null;
+  error_class?: string;
+  error?: string;
+}
+
 export interface HealthResponse {
   status: string;
   planner_reachable: boolean;
   toolsmith: ToolsmithHealth;
   tools_registered: number;
+  failed_extras?: FailedExtra[];
 }
 
 export interface Artifact {

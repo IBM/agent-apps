@@ -112,12 +112,34 @@ class Orchestrator:
                 "summary": outcome.summary,
                 "transcript": outcome.transcript,
                 "needs_secrets": outcome.needs_secrets,
+                "already_existed": outcome.already_existed,
             }
             if outcome.success:
                 try:
                     await self.sync_planner_with_toolsmith()
                 except Exception:  # noqa: BLE001
                     log.exception("planner reload after acquire failed")
+            elif outcome.already_existed:
+                # Toolsmith decided the toolbox already covers the gap, but
+                # cuga emitted a gap anyway — usually because the relevant
+                # tool wasn't visible to cuga in this turn (e.g. an extra
+                # silently failed to build, or cuga's selection didn't
+                # latch). Re-running the same prompt against a fresh thread
+                # lets cuga try again with the full toolset. One retry is
+                # the right ceiling — more would risk an infinite loop.
+                log.info("acquisition already_existed; retrying original message")
+                try:
+                    # Force a sync first in case the adapter view is stale.
+                    await self.sync_planner_with_toolsmith()
+                except Exception:  # noqa: BLE001
+                    log.exception("planner sync before retry failed")
+                retry_thread = f"{thread_id}-retry-{uuid.uuid4().hex[:8]}"
+                retry_result = await self._planner.plan_and_execute(
+                    message, thread_id=retry_thread,
+                )
+                # Use the retry's answer/error/tools_used; keep the
+                # acquisition card so the user understands what happened.
+                result = retry_result
 
         return ChatTurn(
             answer=result.answer,
@@ -159,6 +181,21 @@ class Orchestrator:
 
     async def planner_health(self) -> bool:
         return await self._planner.health()
+
+    async def planner_failed_extras(self) -> list[dict]:
+        """Adapter's silent extra-tool build failures (artifacts that
+        Toolsmith registered but the adapter couldn't load — typically
+        schema mismatches or import-allowlist hits). Surfaced via /health
+        so the UI can flag them."""
+        url = os.environ.get("CUGA_URL", "http://localhost:8000").rstrip("/")
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{url}/health")
+                r.raise_for_status()
+                return list((r.json() or {}).get("failed_extras") or [])
+        except httpx.HTTPError:
+            return []
 
     async def toolsmith_health(self) -> dict:
         return await self._toolsmith.health()

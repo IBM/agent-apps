@@ -99,6 +99,10 @@ class _State:
     # Tool names the orchestrator wants masked from cuga (so the user can
     # force a gap by removing e.g. web_search from this turn's toolset).
     disabled_tools: list[str] = []
+    # Extras whose code couldn't be loaded (bad imports, schema mismatch,
+    # etc.). We keep these around so /health can surface them — without
+    # this they fail silently and look like "tool was never registered".
+    failed_extras: list[dict] = []
     lock: asyncio.Lock = asyncio.Lock()
 
 
@@ -359,13 +363,28 @@ def _build_extra_tool(spec: dict):
     # Build a pydantic args_schema EXCLUDING the secret kwargs — cuga must
     # not see them or try to ask the user for them.
     type_map = {"string": str, "number": float, "integer": int, "boolean": bool}
+
+    # Some upstream sources hand us flattened schemas where the param
+    # value is a bare type string (e.g. {"city": "string"}) instead of
+    # the JSON-Schema {"city": {"type": "string", ...}} shape. Coerce so
+    # downstream .get() calls don't blow up — without this fix, two of
+    # three extra-tool builds (OpenMeteo*) fail silently and cuga ends
+    # up looking like it's missing tools the toolbox actually has.
+    def _normalize_param(info):
+        if isinstance(info, dict):
+            return info
+        if isinstance(info, str):
+            return {"type": info}
+        return {}
+
     fields = {}
     for pname, pinfo in params_schema.items():
         if pname in requires_secrets:
             continue
-        ptype = type_map.get((pinfo or {}).get("type", "string"), str)
-        default = (pinfo or {}).get("default")
-        required = (pinfo or {}).get("required", default is None)
+        info = _normalize_param(pinfo)
+        ptype = type_map.get(info.get("type", "string"), str)
+        default = info.get("default")
+        required = info.get("required", default is None)
         if required and default is None:
             fields[pname] = (ptype, ...)
         else:
@@ -543,13 +562,21 @@ async def _initialize_with_servers(
         # Merge phase-3 generated tools — provenance source is the artifact
         # spec, not an MCP server. We tag with "_cos_server=None" so the
         # /tools endpoint can render them under a 'generated' bucket.
+        failed_extras: list[dict] = []
         for spec in extra_tools_spec:
+            tool_name = spec.get("tool_name") or "<unnamed>"
             try:
                 t = _build_extra_tool(spec)
                 setattr(t, "_cos_server", None)
                 tools.append(t)
-            except Exception:  # noqa: BLE001
-                log.exception("Failed to build extra tool: %s", spec.get("tool_name"))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Failed to build extra tool: %s", tool_name)
+                failed_extras.append({
+                    "tool_name": tool_name,
+                    "artifact_id": spec.get("id"),
+                    "error_class": type(exc).__name__,
+                    "error": str(exc)[:240],
+                })
 
         # Apply user-requested disable list. We drop the tool entirely so
         # cuga doesn't even see it in the schema — this is the mechanism
@@ -584,6 +611,7 @@ async def _initialize_with_servers(
         _State.extra_tools_spec = list(extra_tools_spec)
         _State.secrets = dict(secrets)
         _State.disabled_tools = sorted(disabled_set)
+        _State.failed_extras = failed_extras
         log.info("Cuga adapter ready — %d total tools (%d MCP + %d generated, %d with secrets)",
                  len(tools), len(tools) - len(extra_tools_spec),
                  len(extra_tools_spec), len(secrets))
@@ -621,6 +649,10 @@ async def health() -> dict:
         "servers_loaded": _State.servers_loaded,
         "tool_count": len(_State.tools),
         "extra_tool_count": len(_State.extra_tools_spec),
+        # Extras whose code couldn't be loaded (bad imports, bad schema,
+        # etc.). Surfaced so the UI can flag them rather than have them
+        # disappear silently.
+        "failed_extras": list(_State.failed_extras),
     }
 
 

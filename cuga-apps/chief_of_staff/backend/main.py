@@ -80,11 +80,20 @@ async def health() -> dict:
     planner_ok = await _orchestrator.planner_health() if _orchestrator else False
     toolsmith_health = await _orchestrator.toolsmith_health() if _orchestrator else {}
     tool_count = len(_registry.all()) if _registry else 0
+    failed_extras = []
+    if _orchestrator:
+        try:
+            failed_extras = await _orchestrator.planner_failed_extras()
+        except Exception:  # noqa: BLE001
+            failed_extras = []
     return {
         "status": "ok",
         "planner_reachable": planner_ok,
         "toolsmith": toolsmith_health,
         "tools_registered": tool_count,
+        # Adapter-level extras that didn't load (silent build failures).
+        # Forwarded here so the UI can flag them.
+        "failed_extras": failed_extras,
     }
 
 

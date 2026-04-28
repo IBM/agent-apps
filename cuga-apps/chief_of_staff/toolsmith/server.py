@@ -75,6 +75,7 @@ class AcquireResponse(BaseModel):
     transcript: list[dict]
     artifact: Optional[dict] = None
     needs_secrets: Optional[dict] = None
+    already_existed: bool = False
 
 
 @app.get("/health")
@@ -103,6 +104,7 @@ async def acquire(req: AcquireRequest) -> AcquireResponse:
         summary=result.summary, transcript=result.transcript,
         artifact=artifact_dict,
         needs_secrets=result.needs_secrets,
+        already_existed=result.already_existed,
     )
 
 

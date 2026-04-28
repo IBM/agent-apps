@@ -26,6 +26,9 @@ class AcquireOutcome:
     transcript: list[dict]
     artifact: Optional[dict]   # mcp_tool_spec dict, or None on failure
     needs_secrets: Optional[dict] = None
+    # Toolsmith decided the gap is already filled by an existing tool —
+    # not a build failure. UI renders a different (informational) card.
+    already_existed: bool = False
 
 
 class ToolsmithClient:
@@ -54,6 +57,7 @@ class ToolsmithClient:
                 transcript=data.get("transcript", []),
                 artifact=data.get("artifact"),
                 needs_secrets=data.get("needs_secrets"),
+                already_existed=bool(data.get("already_existed")),
             )
         except httpx.HTTPError as exc:
             log.warning("toolsmith /acquire failed: %s", exc)
