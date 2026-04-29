@@ -108,6 +108,160 @@ const STATUS_ICON: Record<Status, string> = {
   gap:           '❌',
 }
 
+// ── Domain buckets (mirrors docs/apps_overview.svg) ───────────────────────────
+
+type BucketAccent = 'indigo' | 'emerald' | 'amber' | 'pink' | 'cyan' | 'violet' | 'slate'
+
+interface Bucket {
+  id: string
+  title: string
+  ids: string[]
+  accent: BucketAccent
+}
+
+const BUCKETS: Bucket[] = [
+  { id: 'research',     title: 'Research & Knowledge',  accent: 'indigo',
+    ids: ['paper-scout','wiki-dive','web-researcher','youtube-research','webpage-summarizer','hiking-research','movie-recommender'] },
+  { id: 'content',      title: 'Content Creation',      accent: 'emerald',
+    ids: ['newsletter','deck-forge','arch-diagram','api-doc-gen'] },
+  { id: 'documents',    title: 'Documents & Media Q&A', accent: 'amber',
+    ids: ['box-qa','video-qa','drop-summarizer','voice-journal'] },
+  { id: 'productivity', title: 'Productivity',          accent: 'pink',
+    ids: ['smart-todo','travel-agent'] },
+  { id: 'ops',          title: 'Ops & Alerts',          accent: 'cyan',
+    ids: ['server-monitor','stock-alert'] },
+  { id: 'developer',    title: 'Developer & Eval Tools', accent: 'violet',
+    ids: ['code-reviewer','bird-invocable-api'] },
+  { id: 'ibm',          title: 'IBM Stack',             accent: 'slate',
+    ids: ['ibm-cloud-advisor','ibm-docs-qa','ibm-whats-new'] },
+]
+
+const BUCKET_ACCENT: Record<BucketAccent, { bar: string; badge: string; pill: string; ring: string }> = {
+  indigo:  { bar: 'bg-indigo-500',  badge: 'text-indigo-500',
+             pill: 'border-indigo-500/30 hover:border-indigo-500 hover:bg-indigo-500/5',
+             ring: 'ring-indigo-500/40' },
+  emerald: { bar: 'bg-emerald-500', badge: 'text-emerald-500',
+             pill: 'border-emerald-500/30 hover:border-emerald-500 hover:bg-emerald-500/5',
+             ring: 'ring-emerald-500/40' },
+  amber:   { bar: 'bg-amber-500',   badge: 'text-amber-500',
+             pill: 'border-amber-500/30 hover:border-amber-500 hover:bg-amber-500/5',
+             ring: 'ring-amber-500/40' },
+  pink:    { bar: 'bg-pink-500',    badge: 'text-pink-500',
+             pill: 'border-pink-500/30 hover:border-pink-500 hover:bg-pink-500/5',
+             ring: 'ring-pink-500/40' },
+  cyan:    { bar: 'bg-cyan-500',    badge: 'text-cyan-500',
+             pill: 'border-cyan-500/30 hover:border-cyan-500 hover:bg-cyan-500/5',
+             ring: 'ring-cyan-500/40' },
+  violet:  { bar: 'bg-violet-500',  badge: 'text-violet-500',
+             pill: 'border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/5',
+             ring: 'ring-violet-500/40' },
+  slate:   { bar: 'bg-slate-500',   badge: 'text-t3',
+             pill: 'border-tborder hover:border-slate-400 hover:bg-tsurf2',
+             ring: 'ring-slate-500/40' },
+}
+
+function DomainBuckets({
+  useCases,
+  activeBucket,
+  onSelectBucket,
+}: {
+  useCases: typeof USE_CASES
+  activeBucket: string | null
+  onSelectBucket: (id: string | null) => void
+}) {
+  const navigate = useNavigate()
+
+  const ucById = useMemo(() => {
+    const m = new Map<string, (typeof USE_CASES)[number]>()
+    for (const uc of useCases) m.set(uc.id, uc)
+    return m
+  }, [useCases])
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-t1">Browse by domain</h3>
+          <p className="text-sm text-t3">
+            7 capability domains · {BUCKETS.reduce((n, b) => n + b.ids.length, 0)} apps · click a bucket to filter the table below
+          </p>
+        </div>
+        {activeBucket && (
+          <button
+            onClick={() => onSelectBucket(null)}
+            className="text-sm font-medium text-t3 hover:text-t1 px-3 py-1.5 bg-tsurf border border-tborder rounded-lg transition-colors"
+          >
+            ← Show all apps
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {BUCKETS.map((bucket) => {
+          const active = bucket.id === activeBucket
+          const dimmed = activeBucket !== null && !active
+          const a = BUCKET_ACCENT[bucket.accent]
+          const apps = bucket.ids
+            .map((id) => ucById.get(id))
+            .filter(Boolean) as (typeof USE_CASES)
+          return (
+            <div
+              key={bucket.id}
+              className={`bg-tsurf border border-tborder rounded-xl overflow-hidden shadow-sm transition-all ${
+                active ? `ring-2 ${a.ring} shadow-md` : ''
+              } ${dimmed ? 'opacity-50 hover:opacity-100' : ''}`}
+            >
+              <button
+                onClick={() => onSelectBucket(active ? null : bucket.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-tsurf2 transition-colors"
+              >
+                <div className={`w-1.5 h-9 rounded-full ${a.bar}`} />
+                <div className="flex-1 text-left">
+                  <div className="text-sm font-semibold text-t1 leading-tight">{bucket.title}</div>
+                  <div className="text-xs text-t4 mt-0.5">
+                    {apps.length} {apps.length === 1 ? 'app' : 'apps'}
+                    {active && <span className={`ml-1.5 font-semibold ${a.badge}`}>· filtering ↓</span>}
+                  </div>
+                </div>
+                <span className={`text-xs font-bold px-2 py-1 rounded-full bg-tsurf2 ${a.badge}`}>
+                  {apps.length}
+                </span>
+                <svg
+                  className={`w-4 h-4 text-t4 transition-transform ${active ? 'rotate-180' : ''}`}
+                  fill="none"
+                  viewBox="0 0 20 20"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8l5 5 5-5" />
+                </svg>
+              </button>
+              {active && (
+                <div className="px-4 pb-4 pt-3 border-t border-tborder/60 bg-tsurf2/40">
+                  <div className="flex flex-wrap gap-1.5">
+                    {apps.map((uc) => (
+                      <button
+                        key={uc.id}
+                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); navigate(`/use-case/${uc.id}`) }}
+                        className={`text-xs font-medium px-2.5 py-1.5 rounded-md bg-tsurf border ${a.pill} text-t1 transition-colors whitespace-nowrap`}
+                        title={uc.tagline}
+                      >
+                        {uc.name}
+                        {STARRED_IDS.has(uc.id) && (
+                          <span className="text-amber-500 ml-1 font-bold">✦</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Use case table ────────────────────────────────────────────────────────────
 
 interface TableProps {
@@ -116,12 +270,20 @@ interface TableProps {
   filterStatus: Status | 'all'
   filterType: UseCaseType | 'all'
   filterCategory: Category | 'all'
+  filterBucket: string | null
 }
 
-function UseCaseTable({ useCases, search, filterStatus, filterType, filterCategory }: TableProps) {
+function UseCaseTable({ useCases, search, filterStatus, filterType, filterCategory, filterBucket }: TableProps) {
   const navigate = useNavigate()
 
+  const bucketAppIds = useMemo(() => {
+    if (!filterBucket) return null
+    const b = BUCKETS.find((x) => x.id === filterBucket)
+    return b ? new Set(b.ids) : null
+  }, [filterBucket])
+
   const filtered = useCases.filter((uc) => {
+    if (bucketAppIds && !bucketAppIds.has(uc.id)) return false
     const matchesSearch =
       !search ||
       uc.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -291,6 +453,7 @@ export default function Home() {
   const [filterStatus, setFilterStatus] = useState<Status | 'all'>('all')
   const [filterType, setFilterType] = useState<UseCaseType | 'all'>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
+  const [filterBucket, setFilterBucket] = useState<string | null>(null)
 
   const visible = USE_CASES.filter((u) => !u.hidden)
 
@@ -301,7 +464,7 @@ export default function Home() {
     gap:          visible.filter((u) => u.status === 'gap').length,
   }), [])
 
-  const tableProps = { search, filterStatus, filterType, filterCategory }
+  const tableProps = { search, filterStatus, filterType, filterCategory, filterBucket }
 
   return (
     <div className="p-6 md:p-8 max-w-screen-2xl mx-auto">
@@ -358,6 +521,9 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ── Domain buckets (mirrors docs/apps_overview.svg; click filters table) ── */}
+      <DomainBuckets useCases={visible} activeBucket={filterBucket} onSelectBucket={setFilterBucket} />
+
       {/* ── Filters ── */}
       <div className="flex flex-col gap-4 mb-6">
         <div className="flex flex-wrap gap-3 items-center">
@@ -379,9 +545,9 @@ export default function Home() {
             <option value="not-working">Not working</option>
             <option value="gap">Gap</option>
           </select>
-          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all') && (
+          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all' || filterBucket) && (
             <button
-              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all') }}
+              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setFilterBucket(null) }}
               className="px-4 py-2 text-sm font-medium text-t3 hover:text-t1 bg-tsurf2 border border-tborder rounded-xl transition-colors"
             >
               Clear all

@@ -220,7 +220,7 @@ Alert entry: "python train.py consuming 88% CPU since 14:02"`,
     tools: ['fetch_feed()', 'search_feeds()'],
     demoPath: 'apps/newsletter',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
       setup: [
         'cd apps/newsletter',
         'pip install -r requirements.txt',
@@ -228,7 +228,7 @@ Alert entry: "python train.py consuming 88% CPU since 14:02"`,
       command: 'python main.py',
     },
     architecture:
-      'FastAPI web server serves the single-page UI. Feed Query: POST /ask → CugaAgent.invoke(question) → make_feed_tools() fetches and parses RSS/Atom feeds → answer. Scheduled Alerts: asyncio background scheduler checks each alert on its cron interval → agent searches feeds for keyword matches → if "ALERT:" in response, sends SMTP email. All state saved to .store.json.',
+      'FastAPI web server serves the single-page UI. Feed Query: POST /ask → CugaAgent.invoke(question) → make_feed_tools() fetches and parses RSS/Atom feeds → answer. Scheduled Alerts: asyncio background scheduler checks each alert on its cron interval → agent searches feeds for keyword matches → triggered alerts surface in the in-UI Recent Alerts panel. All state saved to .store.json.',
     diagram: `python main.py  →  http://127.0.0.1:18793
 
 Panel 1 — Feed Query (on-demand):
@@ -239,7 +239,7 @@ CugaAgent + make_feed_tools()
       │  fetch_feed("https://arxiv.org/rss/cs.AI")
       │  search_feeds(keywords="agentic AI")
       ▼
-"Found 3 matching articles: …"  [Email this]
+"Found 3 matching articles: …"
 
 Panel 2 — Scheduled Alerts (background scheduler):
 Alert: keywords="LLM release"  schedule=hourly
@@ -248,12 +248,12 @@ Alert: keywords="LLM release"  schedule=hourly
 agent.invoke("Check feeds for: LLM release …")
       │  "ALERT: Found 2 matches …"
       ▼
-SMTP email → ALERT_TO`,
+Recent Alerts panel (in-UI, refreshed every 30s)`,
     cugaContribution: [
       'make_feed_tools() wraps feedparser — agent gets structured article lists (title, URL, summary, published) without any HTTP or XML code',
       'CugaAgent + skills/newsletter.md — the skill file defines search format and alert rules; swap to change behaviour',
-      'Persistent state — .store.json restores feeds, email config, and alert schedules on restart',
-      'Email config is settable from the UI — no restart needed to change SMTP credentials',
+      'Persistent state — .store.json restores feeds and alert schedules on restart',
+      'Alerts surface in-UI — no SMTP setup, no app passwords; the page polls and renders matches as they arrive',
     ],
     examples: [
       'Summarize the latest AI research papers from my feeds',
@@ -347,7 +347,7 @@ CugaAgent (guided by skills/video_qa.md)
     tools: [],
     demoPath: 'apps/drop_summarizer',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
       setup: [
         'cd apps/drop_summarizer',
         'pip install -r requirements.txt',
@@ -356,11 +356,11 @@ CugaAgent (guided by skills/video_qa.md)
       command: 'python main.py',
     },
     architecture:
-      'FastAPI serves the single-page UI. Background watcher: asyncio loop polls ./inbox/ every N seconds; on new file, the app extracts text (.txt/.md read directly; .pdf/images via docling running in a subprocess so OOM kills do not crash the server), then passes the content to the agent for summarisation. App stores content + summary in SQLite. Chat: POST /ask → for specific files, the stored content is injected into the prompt; for general queries, recent summaries are injected as context. Keyword alert check runs after summarisation — pure string match, no LLM.',
+      'FastAPI serves the single-page UI. Upload: user drops a file via the browser; the app extracts text (.txt/.md read directly; .pdf/images via docling running in a subprocess so OOM kills do not crash the server), then passes the content to the agent for summarisation. App stores content + summary in SQLite. Chat: POST /ask → for specific files, the stored content is injected into the prompt; for general queries, recent summaries are injected as context.',
     diagram: `python main.py  →  http://127.0.0.1:18794
 
-File lands in ./inbox/report.pdf
-      │  (background watcher polls every 15s)
+User uploads ./inbox/report.pdf via the browser
+      │
       ▼
 App extracts text
       │  .txt/.md → read directly
@@ -378,10 +378,7 @@ Chat panel (click any file to focus):
 User: "What were the key risks in this report?"
       │  POST /ask  (file content injected into prompt)
       ▼
-CugaAgent → answer
-
-Keyword alert (post-summary, no LLM):
-summary contains "critical" → SMTP email → ALERT_TO`,
+CugaAgent → answer`,
     cugaContribution: [
       'Docling extraction runs in a subprocess — large/complex PDFs cannot OOM-kill the server',
       'Agent only sees clean extracted text — no token waste on tool plumbing or HTML noise',
@@ -417,7 +414,7 @@ summary contains "critical" → SMTP email → ALERT_TO`,
     tools: ['web_search()'],
     demoPath: 'apps/web_researcher',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'TAVILY_API_KEY'],
       setup: [
         'cd apps/web_researcher',
         'pip install -r requirements.txt',
@@ -425,7 +422,7 @@ summary contains "critical" → SMTP email → ALERT_TO`,
       command: 'python main.py',
     },
     architecture:
-      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent calls web_search (Tavily) → answer. Scheduled topics: asyncio background scheduler checks every 5 minutes for overdue topics; when due, runs the agent, logs to SQLite, and optionally emails the result. Topic schedule and email settings persisted in .store.json.',
+      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent calls web_search (Tavily) → answer. Scheduled topics: asyncio background scheduler checks every 5 minutes for overdue topics; when due, runs the agent and appends results to the in-UI Research Log (no email). Topic schedule persisted in .store.json.',
     diagram: `python main.py  →  http://127.0.0.1:18798
 
 Chat panel (ad-hoc):
@@ -445,14 +442,14 @@ CugaAgent + web_search()
       │  web_search("AI agent frameworks 2026")
       ▼
 SQLite: log result in research.db
-      │  (if email configured)
+      │
       ▼
-SMTP email → ALERT_TO`,
+Research Log panel (in-UI, auto-refreshed every 30s)`,
     cugaContribution: [
       'CugaAgent synthesises multiple Tavily search results into a structured report — not just a list of links',
       'Background scheduler checks overdue topics every 5 minutes without a cron daemon or external task runner',
       'Persistent log in SQLite — all research results survive restarts and are viewable in the history panel',
-      'Email config settable from the UI — no restart needed to change SMTP credentials or recipient',
+      'Results surface in-UI — no SMTP setup, no app passwords; the Research Log auto-refreshes',
     ],
     examples: [
       "What's the latest news on quantum computing?",
@@ -551,7 +548,7 @@ CugaAgent → "You mentioned deadlines and team collaboration…"`,
     tools: ['save_todo()', 'list_todos()', 'mark_done()'],
     demoPath: 'apps/smart_todo',
     howToRun: {
-      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'ALERT_TO'],
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL'],
       setup: [
         'cd apps/smart_todo',
         'pip install -r requirements.txt',
@@ -559,7 +556,7 @@ CugaAgent → "You mentioned deadlines and team collaboration…"`,
       command: 'python main.py',
     },
     architecture:
-      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent parses natural language → adds todos to SQLite (todos.db) with due dates extracted from context. Background reminder watcher: asyncio loop checks for overdue items and sends SMTP email. Todo board renders Todos / Reminders / Notes / Done tabs from SQLite on each load.',
+      'FastAPI serves the single-page UI. Chat: POST /ask → CugaAgent parses natural language → adds todos to SQLite (todos.db) with due dates extracted from context. Background reminder watcher: asyncio loop checks every 60s for overdue items and surfaces them in the Recent Alerts panel. Todo board renders Todos / Reminders / Notes / Done tabs from SQLite on each load.',
     diagram: `python main.py  →  http://127.0.0.1:18800
 
 Chat panel (on-demand):
@@ -581,12 +578,12 @@ Background reminder watcher:
 asyncio loop (every 60s)
       │  query todos.db for overdue items
       ▼
-SMTP email → ALERT_TO: "Reminder: Review the PR is due now"`,
+Recent Alerts panel (in-UI): "Reminder: Review the PR is due now"`,
     cugaContribution: [
       'Natural language due-date extraction — "by EOD", "Friday at 5pm", "tomorrow morning" all resolve to timestamps',
       'Categorises input automatically into Todos, Reminders, or Notes based on phrasing',
       'Persistent SQLite store — todos and notes survive restarts; no reconfiguration needed',
-      'Background email watcher fires on due time without a separate cron daemon',
+      'Background reminder watcher fires on due time and surfaces alerts in-UI — no SMTP, no app passwords',
     ],
     examples: [
       'Remind me to review the PR by EOD',
