@@ -101,6 +101,8 @@ PROCS: list[dict] = [
     dict(name="ibm_docs_qa",        kind="app", port=APP_PORTS["ibm_docs_qa"],        cwd=HERE / "ibm_docs_qa",        cmd=_app_cmd()),
     dict(name="ibm_whats_new",      kind="app", port=APP_PORTS["ibm_whats_new"],      cwd=HERE / "ibm_whats_new",      cmd=_app_cmd()),
     dict(name="bird_invocable_api_creator", kind="app", port=APP_PORTS["bird_invocable_api_creator"], cwd=HERE / "bird_invocable_api_creator", cmd=_app_cmd()),
+    dict(name="brief_budget",       kind="app", port=APP_PORTS["brief_budget"],       cwd=HERE / "brief_budget",       cmd=_app_cmd()),
+    dict(name="trip_designer",      kind="app", port=APP_PORTS["trip_designer"],      cwd=HERE / "trip_designer",      cmd=_app_cmd()),
 ]
 
 PID_FILE = HERE / ".launch_pids"

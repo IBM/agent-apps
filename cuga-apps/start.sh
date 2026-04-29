@@ -86,5 +86,11 @@ python ibm_whats_new/main.py --port 28814 &
 log "Starting bird_invocable_api_creator on :28815"
 python bird_invocable_api_creator/main.py --port 28815 &
 
-log "All 24 apps launched. Waiting..."
+log "Starting brief_budget        on :28816"
+python brief_budget/main.py --port 28816 &
+
+log "Starting trip_designer       on :28817"
+python trip_designer/main.py --port 28817 &
+
+log "All 26 apps launched. Waiting..."
 wait

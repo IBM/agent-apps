@@ -131,7 +131,7 @@ const BUCKETS: Bucket[] = [
   { id: 'ops',          title: 'Ops & Alerts',          accent: 'cyan',
     ids: ['server-monitor','stock-alert'] },
   { id: 'developer',    title: 'Developer & Eval Tools', accent: 'violet',
-    ids: ['code-reviewer','bird-invocable-api'] },
+    ids: ['code-reviewer','bird-invocable-api','brief-budget','trip-designer'] },
   { id: 'ibm',          title: 'IBM Stack',             accent: 'slate',
     ids: ['ibm-cloud-advisor','ibm-docs-qa','ibm-whats-new'] },
 ]

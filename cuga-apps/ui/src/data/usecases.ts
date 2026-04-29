@@ -1666,6 +1666,136 @@ dataset_emit  →  output/california_schools/california_schools_{tools.py,
     ],
     inlineTools: [],
   },
+
+  {
+    id: 'brief-budget',
+    name: 'Brief Budget',
+    tagline: 'Research brief on a hard tool-call budget — planner-driven, light prompt',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A research-brief generator with a hard tool-call budget. The system prompt is goal-shaped: no prescribed sub-topics, no prescribed tool order. The agent must decompose the question, allocate the budget across sub-topics, execute, replan if a sub-topic dries up, and synthesize a structured brief with citations. Designed specifically to exercise CUGA\'s planner — every other app in the lineup uses a procedural prompt that absorbs the planner\'s job. Plan + tool calls stream live to the UI over SSE.',
+    category: 'personal',
+    status: 'working',
+    channels: [],
+    tools: ['propose_plan()'],
+    demoPath: 'apps/brief_budget',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TAVILY_API_KEY'],
+      setup: [
+        'cd apps/brief_budget',
+      ],
+      command: 'python main.py --port 28816',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /api/run starts a session with a question + budget; the app spins up a per-session CugaAgent whose tools are budget-wrapped (each non-plan call decrements session.used and streams a tool_call event). A free propose_plan tool records the agent\'s decomposition. The system prompt is deliberately goal-shaped: it prescribes the meta-process (plan → execute → replan → synthesize) but NOT sub-topics or tool order. SSE event stream feeds the UI: init / plan / tool_call / tool_result / budget_exhausted / brief / done. When budget hits 0, every further tool call returns {ok:false, code:budget_exhausted} and the agent must synthesize from what it has.',
+    diagram: `python main.py --port 28816  →  http://127.0.0.1:28816
+
+User: question + budget=15  →  POST /api/run
+      │
+      ▼
+BriefSession { id, budget=15, used=0, plan_history=[], queue }
+      │  asyncio.create_task(_execute(session))
+      ▼
+CugaAgent + tools
+  ├─ propose_plan(plan)       FREE       ──► SSE: plan
+  ├─ search_arxiv             cost: 1    ──► SSE: tool_call (used=1)
+  ├─ search_semantic_scholar  cost: 1    ──► SSE: tool_call (used=2)
+  ├─ propose_plan(replan)     FREE       ──► SSE: plan v2
+  ├─ web_search               cost: 1    ──► SSE: tool_call (used=3)
+  ├─ ...                                                  (used=14, used=15)
+  └─ tool_call → {ok:false, code:"budget_exhausted"}
+      │
+      ▼
+agent synthesizes brief from observations  ──► SSE: brief
+      │
+      ▼
+SSE: done { used=15, budget=15, plan_count=2 }`,
+    cugaContribution: [
+      'Goal-shaped system prompt — under 50 lines, prescribes meta-process only (plan → execute → replan → synthesize). No sub-topics, no tool order. The planner decomposes per question.',
+      'First-class propose_plan tool — free; records the agent\'s decomposition + budget split + tool intentions; UI renders each plan version live so viewers see the planner work.',
+      'Hard budget enforcement at the tool boundary — every non-plan tool call decrements; budget_exhausted returns force the agent to stop calling and synthesize.',
+      'A/B-able demo — comparison between this (planner-driven, no procedural workflow) and procedural-prompt apps like paper_scout shows the difference in budget allocation across sub-topics.',
+    ],
+    examples: [
+      "What's the state of MoE architectures in LLMs?",
+      'Compare RAG benchmarks 2025–2026 (BEIR, BERGEN, etc.)',
+      'Open problems in agent observability',
+      'Recent advances in LoRA fine-tuning of code models',
+      'How are AI agents being applied to bug triage?',
+    ],
+    appUrl: 'http://localhost:28816',
+    mcpUsage: [
+      { server: 'web', tools: ['web_search', 'fetch_webpage', 'fetch_webpage_links', 'fetch_feed', 'search_feeds', 'get_youtube_video_info', 'get_youtube_transcript'] },
+      { server: 'knowledge', tools: ['search_arxiv', 'get_arxiv_paper', 'search_semantic_scholar', 'get_paper_references', 'search_wikipedia', 'get_wikipedia_article', 'get_article_summary', 'get_article_sections', 'get_related_articles'] },
+    ],
+    inlineTools: ['propose_plan'],
+  },
+
+  {
+    id: 'trip-designer',
+    name: 'Trip Designer',
+    tagline: 'Travel itinerary planner with a light, goal-shaped prompt — CUGA decides the workflow',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'Same domain as travel_planner, but the system prompt is deliberately light (~25 lines, no prescribed workflow or tool order). The agent decides its own decomposition (days × themes? geographic zones? practicalities first?), the order of investigation, and the tool mix per sub-task. Plan + tool calls stream live so viewers can compare what this agent chose to do versus the prescribed-workflow travel_planner. Built to test whether CUGA can plan an itinerary when the prompt stops scripting it.',
+    category: 'personal',
+    status: 'working',
+    channels: [],
+    tools: ['propose_plan()'],
+    demoPath: 'apps/trip_designer',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TAVILY_API_KEY', 'OPENTRIPMAP_API_KEY'],
+      setup: [
+        'cd apps/trip_designer',
+      ],
+      command: 'python main.py --port 28817',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /api/run starts a per-session CugaAgent with tools loaded from mcp-web + mcp-knowledge + mcp-geo. Each MCP tool is wrapped with a thin shim that streams tool_call + tool_result events to the session queue (no budget enforcement — this app is about visibility). A free propose_plan tool records the agent\'s plan; the UI renders each plan version. The system prompt is ~25 lines and prescribes nothing about workflow — only "call propose_plan first, cite real sources." Replanning is first-class: the agent can call propose_plan again at any time.',
+    diagram: `python main.py --port 28817  →  http://127.0.0.1:28817
+
+User: destination=Berlin, days=5, month=March,
+      interests=[history, street food],
+      constraints="must end at airport by 3pm Friday"
+      │
+      ▼  POST /api/run
+TripSession { id, request, plan_history=[], tool_calls=[], queue }
+      │
+      ▼  asyncio.create_task(_execute(session))
+CugaAgent (system prompt: ~25 lines, no workflow prescribed)
+  ├─ propose_plan(plan)    ──► SSE: plan v1
+  ├─ <agent decides which tools to call, in what order>
+  ├─ tool_call A           ──► SSE: tool_call + tool_result
+  ├─ tool_call B           ──► SSE: tool_call + tool_result
+  ├─ propose_plan(replan)  ──► SSE: plan v2  (if direction changes)
+  ├─ tool_call C ...
+  └─ synthesise itinerary  ──► SSE: itinerary
+      │
+      ▼
+SSE: done { tool_call_count, plan_count }`,
+    cugaContribution: [
+      'Light goal-shaped prompt — exposes whether CUGA can plan an itinerary without a procedural script. The contrast with travel_planner (which has a 6-step prescribed workflow) is the demo.',
+      'First-class propose_plan + replanning — agent can revise its decomposition mid-flight; the UI shows version history.',
+      'Cross-server orchestration — agent picks freely across mcp-web + mcp-knowledge + mcp-geo with no prompt-level guidance about which server is for what.',
+      'Live plan + tool-call visibility via SSE — viewers can see exactly what the agent chose to do, in what order, and why (replan rationales captured per version).',
+    ],
+    examples: [
+      'Berlin · 5 days · March · history + street food',
+      'Kyoto · 4 days · November · temples + gardens + food',
+      'Lisbon · 3 days · May · azulejos + fado + viewpoints',
+      'Reykjavik · 6 days · February · northern lights + hot springs',
+      'Paris · 4 days · June · museums + boulangeries · constraint: vegetarian only',
+    ],
+    appUrl: 'http://localhost:28817',
+    mcpUsage: [
+      { server: 'web', tools: ['web_search', 'fetch_webpage', 'fetch_webpage_links'] },
+      { server: 'knowledge', tools: ['search_wikipedia', 'get_wikipedia_article', 'get_article_summary', 'get_article_sections', 'get_related_articles'] },
+      { server: 'geo', tools: ['geocode', 'find_hikes', 'search_attractions', 'get_weather'] },
+    ],
+    inlineTools: ['propose_plan'],
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {

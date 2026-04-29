@@ -152,6 +152,8 @@ services:
       - "28813:28813"   # ibm_docs_qa
       - "28814:28814"   # ibm_whats_new
       - "28815:28815"   # bird_invocable_api_creator
+      - "28816:28816"   # brief_budget
+      - "28817:28817"   # trip_designer
     volumes:
       - ./apps/drop_summarizer/inbox:/app/apps/drop_summarizer/inbox
       - ./apps/drop_summarizer/data:/app/apps/drop_summarizer/data

@@ -64,4 +64,6 @@ APP_PORTS: dict[str, int] = {
     "ibm_docs_qa":        28813,
     "ibm_whats_new":      28814,
     "bird_invocable_api_creator": 28815,
+    "brief_budget":               28816,
+    "trip_designer":              28817,
 }
