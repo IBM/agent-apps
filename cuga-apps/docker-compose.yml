@@ -29,7 +29,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.web.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29100:29100"]
     restart: unless-stopped
 
@@ -39,7 +43,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.knowledge.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29101:29101"]
     restart: unless-stopped
 
@@ -49,7 +57,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.geo.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29102:29102"]
     restart: unless-stopped
 
@@ -59,7 +71,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.finance.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29103:29103"]
     restart: unless-stopped
 
@@ -69,7 +85,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.code.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29104:29104"]
     restart: unless-stopped
 
@@ -79,7 +99,11 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.local.server"]
-    env_file: [./apps/.env]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
     ports: ["29105:29105"]
     restart: unless-stopped
 
@@ -89,11 +113,14 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.text.server"]
-    env_file: [./apps/.env]
     ports: ["29106:29106"]
-    # Bind-mount apps' data dirs so extract_text can read files written by
-    # the apps container — same volumes the apps container mounts, RO here.
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
+    # The remaining mounts let extract_text read files written by the apps
+    # container — same volumes the apps container mounts, RO here.
     volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
       - ./apps/drop_summarizer/inbox:/app/apps/drop_summarizer/inbox:ro
       - ./apps/box_qa:/app/apps/box_qa:ro
       - ./apps/deck_forge/data:/app/apps/deck_forge/data:ro
@@ -105,11 +132,14 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     command: ["python", "-m", "mcp_servers.invocable_apis.server"]
-    env_file: [./apps/.env]
     ports: ["29107:29107"]
+    # Secrets are mounted as a read-only file (sourced by entrypoint.sh)
+    # rather than injected via env_file:, so they never appear in
+    # `docker inspect` or in the image. See entrypoint.sh.
     # Bird data lives outside the repo — bind-mount read-only via env-driven
     # host paths. Set BIRD_DEV_JSON_HOST and BIRD_DBS_DIR_HOST in apps/.env.
     volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
       - ${BIRD_DEV_JSON_HOST:-/home/amurthi/work/dev_20240627/dev.json}:/data/bird/dev.json:ro
       - ${BIRD_DBS_DIR_HOST:-/home/amurthi/work/enterprise-benchmark/data/db}:/data/bird/dbs:ro
       - ./mcp_servers/invocable_apis/state:/app/mcp_servers/invocable_apis/state
@@ -125,7 +155,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.apps
-    env_file: [./apps/.env]
     mem_limit: 32g
     ports:
       - "28793:28793"   # newsletter
@@ -154,7 +183,11 @@ services:
       - "28815:28815"   # bird_invocable_api_creator
       - "28816:28816"   # brief_budget
       - "28817:28817"   # trip_designer
+    # First mount: secrets are read at runtime (sourced by entrypoint.sh)
+    # instead of being injected via env_file: — keeps them out of `docker
+    # inspect` and out of the image. See entrypoint.sh.
     volumes:
+      - ./apps/.env:/run/secrets/app.env:ro
       - ./apps/drop_summarizer/inbox:/app/apps/drop_summarizer/inbox
       - ./apps/drop_summarizer/data:/app/apps/drop_summarizer/data
       - ./apps/voice_journal/storage:/app/apps/voice_journal/storage

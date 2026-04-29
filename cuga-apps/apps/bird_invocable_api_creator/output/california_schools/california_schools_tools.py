@@ -305,6 +305,12 @@ def run(conn, schools_dict):
         return {"rows": schools_dict.get("schools", [])}
 extract_school_rows = run; del run
 
+# format_city_list_to_rows — Convert a list of city strings into a list of single‑column rows matching the gold‑SQL shape.
+def run(conn, cities):
+        rows = [[c] for c in cities]   # each city becomes a single‑column row
+        return {"rows": rows}
+format_city_list_to_rows = run; del run
+
 # format_lowest_latitude_school — Reformat the output of get_school_with_lowest_latitude_by_state into a rows list matching the gold‑SQL shape.
 def run(conn, city, low_grade, school_name):
     # Return rows matching the gold‑SQL shape
@@ -382,6 +388,24 @@ def run(conn, county_name, city_name, doc, soc, start_year, end_year):
         # Return list of [email1, email2] (NULLs are kept as None)
         return {"admin_emails": [list(row) for row in rows]}
 get_admin_emails_by_location_and_year = run; del run
+
+# get_admin_first_names_by_top_count — Return distinct administrator first name (AdmFName1) and the district they administer for the N most frequent first names across all schools.
+def run(conn, top_n):
+        sql = """
+            SELECT DISTINCT s.AdmFName1, s.District
+            FROM schools AS s
+            INNER JOIN (
+                SELECT AdmFName1
+                FROM schools
+                GROUP BY AdmFName1
+                ORDER BY COUNT(AdmFName1) DESC
+                LIMIT ?
+            ) AS top_names
+            ON s.AdmFName1 = top_names.AdmFName1
+        """
+        rows = conn.execute(sql, (top_n,)).fetchall()
+        return {"rows": [list(r) for r in rows]}
+get_admin_first_names_by_top_count = run; del run
 
 # get_admin_last_name_district_county_school_by_charter_number — Returns a single row [admin_last_name, district, county, school] for the school identified by a Charter number.
 def run(conn, charter_number):
@@ -503,6 +527,38 @@ def run(conn, limit):
         cities = [[row[0]] for row in rows]
         return {"cities": cities}
 get_cities_with_lowest_k12_enrollment = run; del run
+
+# get_city_counts_for_magnet_and_provision — Counts schools per city that (1) have a magnet program (Magnet flag), (2) serve the specified grade span (GSoffered), and (3) have the given NSLP provision status. Returns a list of objects with city name and school count.
+def run(conn, magnet_flag, grade_span, provision_status):
+    cur = conn.execute(
+        "SELECT T2.City, COUNT(T2.CDSCode) "
+        "FROM frpm AS T1 "
+        "INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode "
+        "WHERE T2.Magnet = ? "
+        "AND T2.GSoffered = ? COLLATE NOCASE "
+        "AND T1.`NSLP Provision Status` = ? COLLATE NOCASE "
+        "GROUP BY T2.City",
+        (magnet_flag, grade_span, provision_status)
+    )
+    rows = cur.fetchall()
+    result = [{"city": r[0], "school_count": r[1]} for r in rows]
+    return {"city_counts": result}
+get_city_counts_for_magnet_and_provision = run; del run
+
+# get_county_with_most_closures_1980s_by_soc — County that had the highest number of school closures during the 1980s for a given school‑ownership code (SOC).
+def run(conn, soc_code):
+        row = conn.execute(
+            """SELECT County FROM schools
+               WHERE strftime('%Y', ClosedDate) BETWEEN '1980' AND '1989'
+                 AND StatusType = 'Closed'
+                 AND SOC = ?
+               GROUP BY County
+               ORDER BY COUNT(School) DESC
+               LIMIT 1""",
+            (soc_code,)
+        ).fetchone()
+        return {"county": row[0] if row else None}
+get_county_with_most_closures_1980s_by_soc = run; del run
 
 # get_county_with_most_closures_by_soc_and_year_range — County that has the highest number of schools closed in a given year range for a specific SOC ownership code.
 def run(conn, soc_code, start_year, end_year):
@@ -1353,6 +1409,21 @@ def run(conn, soc_code, limit):
         return {"rates": rates}
 get_top_n_free_meal_rates_by_frpm_and_soc = run; del run
 
+# get_top_n_free_meal_rates_by_ownership — Returns the eligible free‑or‑reduced‑price meal rate (FRPM Count (K‑12) / Enrollment (K‑12)) for the top N schools with a given ownership code, ordered by FRPM Count (K‑12) descending.
+def run(conn, ownership_code, limit):
+    cur = conn.execute(
+        '''SELECT CAST(frpm.`FRPM Count (K-12)` AS REAL) / frpm.`Enrollment (K-12)`
+           FROM frpm
+           INNER JOIN schools ON frpm.CDSCode = schools.CDSCode
+           WHERE schools.SOC = ?
+           ORDER BY frpm.`FRPM Count (K-12)` DESC
+           LIMIT ?''',
+        (ownership_code, limit)
+    )
+    rows = cur.fetchall()
+    return {"rates": [r[0] for r in rows] if rows else []}
+get_top_n_free_meal_rates_by_ownership = run; del run
+
 # get_top_n_phone_numbers_by_sat_excellence_rate — Phone numbers of the top N schools ordered by SAT excellence rate (NumGE1500 / NumTstTakr).
 def run(conn, limit):
         rows = conn.execute(
@@ -1462,20 +1533,19 @@ list_address_of_school_with_lowest_excellence_rate = run; del run
 
 # list_virtual_schools_top5_by_county_reading — Names of exclusively virtual schools that rank in the top 5 within their county by average SAT reading score.
 def run(conn):
-    sql = '''
-    SELECT School FROM (
-        SELECT T2.School,
-               T1.AvgScrRead,
-               RANK() OVER (PARTITION BY T2.County ORDER BY T1.AvgScrRead DESC) AS rnk
-        FROM satscores AS T1
-        INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode
-        WHERE T2.Virtual = 'F'
-    ) ranked
-    WHERE rnk <= 5
-    '''
-    rows = conn.execute(sql).fetchall()
-    names = [r[0] for r in rows]
-    return {"school_names": names}
+        # Rank virtual schools (Virtual = 'F') by AvgScrRead within each county,
+        # then keep the top‑5 per county.
+        cur = conn.execute(
+            "SELECT T2.School FROM ("
+            "SELECT T2.School, T1.AvgScrRead, "
+            "RANK() OVER (PARTITION BY T2.County ORDER BY T1.AvgScrRead DESC) AS rnk "
+            "FROM satscores AS T1 "
+            "JOIN schools AS T2 ON T1.cds = T2.CDSCode "
+            "WHERE T2.Virtual = 'F' COLLATE NOCASE"
+            ") ranked_schools WHERE rnk <= 5"
+        )
+        rows = [[row[0]] for row in cur.fetchall()]  # each row is a single‑element list
+        return {"rows": rows}
 list_virtual_schools_top5_by_county_reading = run; del run
 
 # question_0_wrapper — Execute the gold SQL for question 0 and return its rows.

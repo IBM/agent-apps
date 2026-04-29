@@ -9,7 +9,63 @@ import {
   type Category,
 } from '../data/usecases'
 
-const STARRED_IDS = new Set(['deck-forge', 'drop-summarizer', 'smart-todo', 'video-qa'])
+// Apps default to ship-ready (✦ badge, sorted to top). Listing an id below
+// flips it to "for-later" — useful for demos that aren't polished enough
+// for an unattended end-to-end run yet.
+const FOR_LATER_IDS = new Set([
+  'bird-invocable-api',
+  'api-doc-gen',
+  'box-qa',
+  'code-reviewer',
+  'deck-forge',
+  'smart-todo',
+  'drop-summarizer',
+])
+
+const isShipReady = (id: string) => !FOR_LATER_IDS.has(id)
+
+type ShipFilter = 'all' | 'ship-ready' | 'for-later'
+
+const SHIP_FILTER_LABEL: Record<ShipFilter, string> = {
+  'all':         'All',
+  'ship-ready':  '✦ Ship-ready',
+  'for-later':   'For later',
+}
+
+function ShipFilterChips({
+  value,
+  onChange,
+}: {
+  value: ShipFilter
+  onChange: (v: ShipFilter) => void
+}) {
+  const options: ShipFilter[] = ['all', 'ship-ready', 'for-later']
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap">
+      <span className="text-sm text-t4 font-semibold uppercase tracking-wider w-20 shrink-0">Stage</span>
+      {options.map((opt) => {
+        const active = value === opt
+        const activeCls =
+          opt === 'ship-ready'
+            ? 'bg-amber-500 text-white border-amber-500'
+            : opt === 'for-later'
+            ? 'bg-slate-500 text-white border-slate-500'
+            : 'bg-indigo-600 text-white border-indigo-600'
+        return (
+          <button
+            key={opt}
+            onClick={() => onChange(opt)}
+            className={`text-sm px-3.5 py-1.5 rounded-full font-medium border transition-all ${
+              active ? activeCls : 'bg-tsurf border-tborder text-t3 hover:text-t1 hover:border-t2'
+            }`}
+          >
+            {SHIP_FILTER_LABEL[opt]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 const resolveUrl = (url: string | null): string | null => {
   if (!url) return null
@@ -131,7 +187,7 @@ const BUCKETS: Bucket[] = [
   { id: 'ops',          title: 'Ops & Alerts',          accent: 'cyan',
     ids: ['server-monitor','stock-alert'] },
   { id: 'developer',    title: 'Developer & Eval Tools', accent: 'violet',
-    ids: ['code-reviewer','bird-invocable-api','brief-budget','trip-designer'] },
+    ids: ['code-reviewer','bird-invocable-api'] },
   { id: 'ibm',          title: 'IBM Stack',             accent: 'slate',
     ids: ['ibm-cloud-advisor','ibm-docs-qa','ibm-whats-new'] },
 ]
@@ -246,7 +302,7 @@ function DomainBuckets({
                         title={uc.tagline}
                       >
                         {uc.name}
-                        {STARRED_IDS.has(uc.id) && (
+                        {isShipReady(uc.id) && (
                           <span className="text-amber-500 ml-1 font-bold">✦</span>
                         )}
                       </button>
@@ -271,9 +327,10 @@ interface TableProps {
   filterType: UseCaseType | 'all'
   filterCategory: Category | 'all'
   filterBucket: string | null
+  filterShip: ShipFilter
 }
 
-function UseCaseTable({ useCases, search, filterStatus, filterType, filterCategory, filterBucket }: TableProps) {
+function UseCaseTable({ useCases, search, filterStatus, filterType, filterCategory, filterBucket, filterShip }: TableProps) {
   const navigate = useNavigate()
 
   const bucketAppIds = useMemo(() => {
@@ -282,17 +339,29 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
     return b ? new Set(b.ids) : null
   }, [filterBucket])
 
-  const filtered = useCases.filter((uc) => {
-    if (bucketAppIds && !bucketAppIds.has(uc.id)) return false
-    const matchesSearch =
-      !search ||
-      uc.name.toLowerCase().includes(search.toLowerCase()) ||
-      uc.tagline.toLowerCase().includes(search.toLowerCase())
-    const matchesStatus = filterStatus === 'all' || uc.status === filterStatus
-    const matchesType = filterType === 'all' || uc.type === filterType
-    const matchesCategory = filterCategory === 'all' || uc.category === filterCategory
-    return matchesSearch && matchesStatus && matchesType && matchesCategory
-  })
+  const filtered = useCases
+    .filter((uc) => {
+      if (bucketAppIds && !bucketAppIds.has(uc.id)) return false
+      const matchesSearch =
+        !search ||
+        uc.name.toLowerCase().includes(search.toLowerCase()) ||
+        uc.tagline.toLowerCase().includes(search.toLowerCase())
+      const matchesStatus = filterStatus === 'all' || uc.status === filterStatus
+      const matchesType = filterType === 'all' || uc.type === filterType
+      const matchesCategory = filterCategory === 'all' || uc.category === filterCategory
+      const ship = isShipReady(uc.id)
+      const matchesShip =
+        filterShip === 'all' ||
+        (filterShip === 'ship-ready' && ship) ||
+        (filterShip === 'for-later' && !ship)
+      return matchesSearch && matchesStatus && matchesType && matchesCategory && matchesShip
+    })
+    // Stable sort: ship-ready first, original order otherwise.
+    .sort((a, b) => {
+      const sa = isShipReady(a.id) ? 0 : 1
+      const sb = isShipReady(b.id) ? 0 : 1
+      return sa - sb
+    })
 
   if (filtered.length === 0) {
     return <div className="py-12 text-center text-t3 text-base">No use cases match your filters.</div>
@@ -333,7 +402,7 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                 <td className="px-6 py-5 text-t4 text-sm font-mono">{i + 1}</td>
                 <td className="px-4 py-5">
                   <div className="font-semibold text-t1 text-lg group-hover:text-indigo-500 transition-colors leading-snug">
-                    {uc.name}{STARRED_IDS.has(uc.id) && <span className="text-amber-500 ml-1.5 font-bold">✦</span>}
+                    {uc.name}{isShipReady(uc.id) && <span className="text-amber-500 ml-1.5 font-bold">✦</span>}
                   </div>
                   <div className="text-sm text-t3 mt-1 leading-relaxed">{uc.tagline}</div>
                 </td>
@@ -454,6 +523,7 @@ export default function Home() {
   const [filterType, setFilterType] = useState<UseCaseType | 'all'>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
   const [filterBucket, setFilterBucket] = useState<string | null>(null)
+  const [filterShip, setFilterShip] = useState<ShipFilter>('all')
 
   const visible = USE_CASES.filter((u) => !u.hidden)
 
@@ -464,7 +534,7 @@ export default function Home() {
     gap:          visible.filter((u) => u.status === 'gap').length,
   }), [])
 
-  const tableProps = { search, filterStatus, filterType, filterCategory, filterBucket }
+  const tableProps = { search, filterStatus, filterType, filterCategory, filterBucket, filterShip }
 
   return (
     <div className="p-6 md:p-8 max-w-screen-2xl mx-auto">
@@ -545,15 +615,16 @@ export default function Home() {
             <option value="not-working">Not working</option>
             <option value="gap">Gap</option>
           </select>
-          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all' || filterBucket) && (
+          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all' || filterBucket || filterShip !== 'all') && (
             <button
-              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setFilterBucket(null) }}
+              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setFilterBucket(null); setFilterShip('all') }}
               className="px-4 py-2 text-sm font-medium text-t3 hover:text-t1 bg-tsurf2 border border-tborder rounded-xl transition-colors"
             >
               Clear all
             </button>
           )}
         </div>
+        <ShipFilterChips value={filterShip} onChange={setFilterShip} />
         <TypeFilterChips value={filterType} onChange={setFilterType} />
         <CategoryFilterChips value={filterCategory} onChange={setFilterCategory} />
       </div>
@@ -563,7 +634,7 @@ export default function Home() {
 
       <p className="mt-5 text-sm text-t4">
         Click any row to see architecture, run instructions, and how CUGA powers it.{' '}
-        <span className="text-amber-500">✦</span> highlighted demos
+        <span className="text-amber-500">✦</span> ship-ready · everything else is for-later
       </p>
     </div>
   )

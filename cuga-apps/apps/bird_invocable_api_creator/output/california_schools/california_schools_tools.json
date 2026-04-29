@@ -572,6 +572,26 @@
     "return_description": "{rows: list of [school, doc] tuples}"
   },
   {
+    "name": "format_city_list_to_rows",
+    "description": "Convert a list of city strings into a list of single\u2011column rows matching the gold\u2011SQL shape.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "cities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of city names to format as rows."
+        }
+      },
+      "required": [
+        "cities"
+      ]
+    },
+    "return_description": "{rows: list of [city] rows}"
+  },
+  {
     "name": "format_lowest_latitude_school",
     "description": "Reformat the output of get_school_with_lowest_latitude_by_state into a rows list matching the gold\u2011SQL shape.",
     "params_schema": {
@@ -679,6 +699,24 @@
       ]
     },
     "return_description": "{admin_emails: list of [email1, email2] rows}"
+  },
+  {
+    "name": "get_admin_first_names_by_top_count",
+    "description": "Return distinct administrator first name (AdmFName1) and the district they administer for the N most frequent first names across all schools.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "top_n": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of most common administrator first names to return (e.g., 2)."
+        }
+      },
+      "required": [
+        "top_n"
+      ]
+    },
+    "return_description": "{rows: list of [first_name, district] rows}"
   },
   {
     "name": "get_admin_last_name_district_county_school_by_charter_number",
@@ -842,6 +880,69 @@
       ]
     },
     "return_description": "{cities: list of [city] rows}"
+  },
+  {
+    "name": "get_city_counts_for_magnet_and_provision",
+    "description": "Counts schools per city that (1) have a magnet program (Magnet flag), (2) serve the specified grade span (GSoffered), and (3) have the given NSLP provision status. Returns a list of objects with city name and school count.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "magnet_flag": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "Value of the `Magnet` column (1 = offers a magnet program)."
+        },
+        "grade_span": {
+          "type": "string",
+          "examples": [
+            "K-6",
+            "9-12",
+            "K-12"
+          ],
+          "description": "Exact value of the `GSoffered` column indicating the grade span offered."
+        },
+        "provision_status": {
+          "type": "string",
+          "examples": [
+            "Multiple Provision Types",
+            "Breakfast Provision 2"
+          ],
+          "description": "Exact value of the `NSLP Provision Status` column in the `frpm` table."
+        }
+      },
+      "required": [
+        "magnet_flag",
+        "grade_span",
+        "provision_status"
+      ]
+    },
+    "return_description": "{'city_counts': [{'city': str, 'school_count': int}, ...]} \u2013 list of cities with matching school counts."
+  },
+  {
+    "name": "get_county_with_most_closures_1980s_by_soc",
+    "description": "County that had the highest number of school closures during the 1980s for a given school\u2011ownership code (SOC).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "soc_code": {
+          "type": "string",
+          "examples": [
+            "08",
+            "09",
+            "10",
+            "13"
+          ],
+          "description": "School ownership code (SOC) as stored in the `SOC` column."
+        }
+      },
+      "required": [
+        "soc_code"
+      ]
+    },
+    "return_description": "{\"county\": string|null} \u2013 the county name with the most closures, or null if none match."
   },
   {
     "name": "get_county_with_most_closures_by_soc_and_year_range",
@@ -2020,6 +2121,28 @@
     "return_description": "{rates: list of float} \u2013 eligible free\u2011meal rates for the selected schools."
   },
   {
+    "name": "get_top_n_free_meal_rates_by_ownership",
+    "description": "Returns the eligible free\u2011or\u2011reduced\u2011price meal rate (FRPM Count (K\u201112) / Enrollment (K\u201112)) for the top N schools with a given ownership code, ordered by FRPM Count (K\u201112) descending.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "ownership_code": {
+          "type": "integer",
+          "description": "Value of the `SOC` column in the `schools` table (ownership code)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Number of top schools to return, ordered by FRPM Count (K\u201112) descending."
+        }
+      },
+      "required": [
+        "ownership_code",
+        "limit"
+      ]
+    },
+    "return_description": "{rates: list of float} \u2013 the computed ratios for the selected schools, in rank order."
+  },
+  {
     "name": "get_top_n_phone_numbers_by_sat_excellence_rate",
     "description": "Phone numbers of the top N schools ordered by SAT excellence rate (NumGE1500 / NumTstTakr).",
     "params_schema": {
@@ -2176,7 +2299,7 @@
       "properties": {},
       "required": []
     },
-    "return_description": "{school_names: list of string} \u2013 the matching school names."
+    "return_description": "{rows: list of [school_name] rows}"
   },
   {
     "name": "question_0_wrapper",

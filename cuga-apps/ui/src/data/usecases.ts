@@ -1669,6 +1669,7 @@ dataset_emit  →  output/california_schools/california_schools_{tools.py,
 
   {
     id: 'brief-budget',
+    hidden: true,
     name: 'Brief Budget',
     tagline: 'Research brief on a hard tool-call budget — planner-driven, light prompt',
     type: 'other',
@@ -1734,6 +1735,7 @@ SSE: done { used=15, budget=15, plan_count=2 }`,
 
   {
     id: 'trip-designer',
+    hidden: true,
     name: 'Trip Designer',
     tagline: 'Travel itinerary planner with a light, goal-shaped prompt — CUGA decides the workflow',
     type: 'other',

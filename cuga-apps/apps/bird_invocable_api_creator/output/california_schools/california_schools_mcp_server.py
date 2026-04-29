@@ -308,6 +308,18 @@ def extract_school_rows(schools_dict) -> str:
         return _err(_e)
 
 @mcp.tool()
+def format_city_list_to_rows(cities) -> str:
+    """Convert a list of city strings into a list of single‑column rows matching the gold‑SQL shape."""
+    try:
+        _ns = {}
+        exec(compile("def run(conn, cities):\n        rows = [[c] for c in cities]   # each city becomes a single\u2011column row\n        return {\"rows\": rows}\n    ", "<tool>", "exec"), _ns)
+        with _conn() as _c:
+            out = _ns["run"](_c, cities=cities)
+        return _ok(out)
+    except Exception as _e:
+        return _err(_e)
+
+@mcp.tool()
 def format_lowest_latitude_school(city, low_grade, school_name) -> str:
     """Reformat the output of get_school_with_lowest_latitude_by_state into a rows list matching the gold‑SQL shape."""
     try:
@@ -375,6 +387,18 @@ def get_admin_emails_by_location_and_year(county_name, city_name, doc, soc, star
         exec(compile("def run(conn, county_name, city_name, doc, soc, start_year, end_year):\n        cur = conn.execute(\n            \"\"\"SELECT T2.AdmEmail1, T2.AdmEmail2\n               FROM frpm AS T1\n               INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode\n               WHERE T2.County = ?\n                 AND T2.City = ?\n                 AND T2.DOC = ?\n                 AND T2.SOC = ?\n                 AND strftime('%Y', T2.OpenDate) BETWEEN ? AND ?\"\"\",\n            (county_name, city_name, doc, soc, start_year, end_year)\n        )\n        rows = cur.fetchall()\n        # Return list of [email1, email2] (NULLs are kept as None)\n        return {\"admin_emails\": [list(row) for row in rows]}\n    ", "<tool>", "exec"), _ns)
         with _conn() as _c:
             out = _ns["run"](_c, county_name=county_name, city_name=city_name, doc=doc, soc=soc, start_year=start_year, end_year=end_year)
+        return _ok(out)
+    except Exception as _e:
+        return _err(_e)
+
+@mcp.tool()
+def get_admin_first_names_by_top_count(top_n) -> str:
+    """Return distinct administrator first name (AdmFName1) and the district they administer for the N most frequent first names across all schools."""
+    try:
+        _ns = {}
+        exec(compile("def run(conn, top_n):\n        sql = \"\"\"\n            SELECT DISTINCT s.AdmFName1, s.District\n            FROM schools AS s\n            INNER JOIN (\n                SELECT AdmFName1\n                FROM schools\n                GROUP BY AdmFName1\n                ORDER BY COUNT(AdmFName1) DESC\n                LIMIT ?\n            ) AS top_names\n            ON s.AdmFName1 = top_names.AdmFName1\n        \"\"\"\n        rows = conn.execute(sql, (top_n,)).fetchall()\n        return {\"rows\": [list(r) for r in rows]}\n    ", "<tool>", "exec"), _ns)
+        with _conn() as _c:
+            out = _ns["run"](_c, top_n=top_n)
         return _ok(out)
     except Exception as _e:
         return _err(_e)
@@ -483,6 +507,30 @@ def get_cities_with_lowest_k12_enrollment(limit) -> str:
         exec(compile("def run(conn, limit):\n        rows = conn.execute(\n            \"SELECT T2.City FROM frpm AS T1 JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode \"\n            \"GROUP BY T2.City ORDER BY SUM(T1.`Enrollment (K-12)`) ASC LIMIT ?\",\n            (limit,)\n        ).fetchall()\n        # Return each city as a single\u2011element list to match the gold row shape\n        cities = [[row[0]] for row in rows]\n        return {\"cities\": cities}\n    ", "<tool>", "exec"), _ns)
         with _conn() as _c:
             out = _ns["run"](_c, limit=limit)
+        return _ok(out)
+    except Exception as _e:
+        return _err(_e)
+
+@mcp.tool()
+def get_city_counts_for_magnet_and_provision(magnet_flag, grade_span, provision_status) -> str:
+    """Counts schools per city that (1) have a magnet program (Magnet flag), (2) serve the specified grade span (GSoffered), and (3) have the given NSLP provision status. Returns a list of objects with city name and school count."""
+    try:
+        _ns = {}
+        exec(compile("def run(conn, magnet_flag, grade_span, provision_status):\n    cur = conn.execute(\n        \"SELECT T2.City, COUNT(T2.CDSCode) \"\n        \"FROM frpm AS T1 \"\n        \"INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode \"\n        \"WHERE T2.Magnet = ? \"\n        \"AND T2.GSoffered = ? COLLATE NOCASE \"\n        \"AND T1.`NSLP Provision Status` = ? COLLATE NOCASE \"\n        \"GROUP BY T2.City\",\n        (magnet_flag, grade_span, provision_status)\n    )\n    rows = cur.fetchall()\n    result = [{\"city\": r[0], \"school_count\": r[1]} for r in rows]\n    return {\"city_counts\": result}", "<tool>", "exec"), _ns)
+        with _conn() as _c:
+            out = _ns["run"](_c, magnet_flag=magnet_flag, grade_span=grade_span, provision_status=provision_status)
+        return _ok(out)
+    except Exception as _e:
+        return _err(_e)
+
+@mcp.tool()
+def get_county_with_most_closures_1980s_by_soc(soc_code) -> str:
+    """County that had the highest number of school closures during the 1980s for a given school‑ownership code (SOC)."""
+    try:
+        _ns = {}
+        exec(compile("def run(conn, soc_code):\n        row = conn.execute(\n            \"\"\"SELECT County FROM schools\n               WHERE strftime('%Y', ClosedDate) BETWEEN '1980' AND '1989'\n                 AND StatusType = 'Closed'\n                 AND SOC = ?\n               GROUP BY County\n               ORDER BY COUNT(School) DESC\n               LIMIT 1\"\"\",\n            (soc_code,)\n        ).fetchone()\n        return {\"county\": row[0] if row else None}\n    ", "<tool>", "exec"), _ns)
+        with _conn() as _c:
+            out = _ns["run"](_c, soc_code=soc_code)
         return _ok(out)
     except Exception as _e:
         return _err(_e)
@@ -1208,6 +1256,18 @@ def get_top_n_free_meal_rates_by_frpm_and_soc(soc_code, limit) -> str:
         return _err(_e)
 
 @mcp.tool()
+def get_top_n_free_meal_rates_by_ownership(ownership_code, limit) -> str:
+    """Returns the eligible free‑or‑reduced‑price meal rate (FRPM Count (K‑12) / Enrollment (K‑12)) for the top N schools with a given ownership code, ordered by FRPM Count (K‑12) descending."""
+    try:
+        _ns = {}
+        exec(compile("def run(conn, ownership_code, limit):\n    cur = conn.execute(\n        '''SELECT CAST(frpm.`FRPM Count (K-12)` AS REAL) / frpm.`Enrollment (K-12)`\n           FROM frpm\n           INNER JOIN schools ON frpm.CDSCode = schools.CDSCode\n           WHERE schools.SOC = ?\n           ORDER BY frpm.`FRPM Count (K-12)` DESC\n           LIMIT ?''',\n        (ownership_code, limit)\n    )\n    rows = cur.fetchall()\n    return {\"rates\": [r[0] for r in rows] if rows else []}\n", "<tool>", "exec"), _ns)
+        with _conn() as _c:
+            out = _ns["run"](_c, ownership_code=ownership_code, limit=limit)
+        return _ok(out)
+    except Exception as _e:
+        return _err(_e)
+
+@mcp.tool()
 def get_top_n_phone_numbers_by_sat_excellence_rate(limit) -> str:
     """Phone numbers of the top N schools ordered by SAT excellence rate (NumGE1500 / NumTstTakr)."""
     try:
@@ -1308,7 +1368,7 @@ def list_virtual_schools_top5_by_county_reading() -> str:
     """Names of exclusively virtual schools that rank in the top 5 within their county by average SAT reading score."""
     try:
         _ns = {}
-        exec(compile("def run(conn):\n    sql = '''\n    SELECT School FROM (\n        SELECT T2.School,\n               T1.AvgScrRead,\n               RANK() OVER (PARTITION BY T2.County ORDER BY T1.AvgScrRead DESC) AS rnk\n        FROM satscores AS T1\n        INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode\n        WHERE T2.Virtual = 'F'\n    ) ranked\n    WHERE rnk <= 5\n    '''\n    rows = conn.execute(sql).fetchall()\n    names = [r[0] for r in rows]\n    return {\"school_names\": names}\n", "<tool>", "exec"), _ns)
+        exec(compile("def run(conn):\n        # Rank virtual schools (Virtual = 'F') by AvgScrRead within each county,\n        # then keep the top\u20115 per county.\n        cur = conn.execute(\n            \"SELECT T2.School FROM (\"\n            \"SELECT T2.School, T1.AvgScrRead, \"\n            \"RANK() OVER (PARTITION BY T2.County ORDER BY T1.AvgScrRead DESC) AS rnk \"\n            \"FROM satscores AS T1 \"\n            \"JOIN schools AS T2 ON T1.cds = T2.CDSCode \"\n            \"WHERE T2.Virtual = 'F' COLLATE NOCASE\"\n            \") ranked_schools WHERE rnk <= 5\"\n        )\n        rows = [[row[0]] for row in cur.fetchall()]  # each row is a single\u2011element list\n        return {\"rows\": rows}\n    ", "<tool>", "exec"), _ns)
         with _conn() as _c:
             out = _ns["run"](_c)
         return _ok(out)

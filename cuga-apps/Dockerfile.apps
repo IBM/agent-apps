@@ -27,6 +27,11 @@ ENV PYTHONPATH=/app
 COPY apps/ ./apps/
 
 COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /start.sh /entrypoint.sh
 
+# Secrets are mounted at /run/secrets/app.env at runtime (read-only volume in
+# docker-compose.yml). The entrypoint sources them into the process env at
+# startup so they never appear in `docker inspect` or in the image itself.
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/start.sh"]

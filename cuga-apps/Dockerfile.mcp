@@ -38,5 +38,12 @@ COPY apps/_ports.py ./apps/_ports.py
 COPY apps/__init__.py ./apps/__init__.py
 COPY mcp_servers/ ./mcp_servers/
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Secrets are mounted at /run/secrets/app.env at runtime (read-only volume in
+# docker-compose.yml). The entrypoint sources them into the process env at
+# startup so they never appear in `docker inspect` or in the image itself.
+ENTRYPOINT ["/entrypoint.sh"]
 # Default command is overridden per-service; this is a safety fallback.
 CMD ["python", "-m", "mcp_servers.web.server"]
