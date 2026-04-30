@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { USE_CASES, CATEGORIES, STATUS_LABELS, type UseCaseType } from '../data/usecases'
+import { resolveAppUrl } from '../data/deployment'
 import Badge from '../components/Badge'
 import CodeBlock from '../components/CodeBlock'
 
@@ -60,6 +61,11 @@ export default function UseCaseDetail() {
 
   const envFileContent = uc.howToRun.envVars.map((v) => `${v}=`).join('\n')
 
+  // Effective URL based on deployment target. null on Hugging Face when
+  // this app isn't deployed to CE (tier 3); null locally when uc.appUrl
+  // itself is null.
+  const launchUrl = resolveAppUrl(uc)
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Back */}
@@ -84,9 +90,9 @@ export default function UseCaseDetail() {
             </span>
             <Badge label={statusInfo.label} color={statusInfo.color as any} />
             {/* Future: Launch App button */}
-            {uc.appUrl ? (
+            {launchUrl ? (
               <a
-                href={uc.appUrl}
+                href={launchUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors"
@@ -200,13 +206,13 @@ export default function UseCaseDetail() {
         <section className="mb-8">
           <div className="flex items-center gap-3 mb-3">
             <h3 className="text-base font-semibold text-white">Try these</h3>
-            {uc.appUrl && (
+            {launchUrl && (
               <span className="text-xs text-gray-500">
                 — type into the app at{' '}
-                <a href={uc.appUrl} target="_blank" rel="noopener noreferrer"
+                <a href={launchUrl} target="_blank" rel="noopener noreferrer"
                   className="text-indigo-400 hover:text-indigo-300 font-mono"
                 >
-                  {uc.appUrl}
+                  {launchUrl}
                 </a>
               </span>
             )}

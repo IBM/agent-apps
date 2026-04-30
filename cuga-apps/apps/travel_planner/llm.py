@@ -256,12 +256,21 @@ def create_llm(
                 "LLM_PROVIDER=watsonx requires WATSONX_PROJECT_ID or WATSONX_SPACE_ID."
             )
 
+        # NOTE: pass temperature / max_tokens as top-level kwargs, NOT inside
+        # `params={"max_new_tokens": ...}`. Recent langchain_ibm uses the
+        # OpenAI-style chat completions wire format which expects `max_tokens`,
+        # and silently ignores the legacy `params={"max_new_tokens": ...}`
+        # field — watsonx then defaults to ~1024 output tokens. With reasoning
+        # models like gpt-oss-120b that's not enough budget for the reasoning
+        # channel plus the visible answer, so `content` comes back empty and
+        # the UI shows nothing. Mirror of the same fix in apps/_llm.py.
         url = os.environ.get("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
         params: Dict[str, Any] = {
             "model_id": model or "meta-llama/llama-3-3-70b-instruct",
             "url": url,
             "apikey": api_key,
-            "params": {"temperature": temperature, "max_new_tokens": 4096},
+            "temperature": temperature,
+            "max_tokens": 16000,
         }
         if project_id:
             params["project_id"] = project_id

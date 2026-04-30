@@ -66,4 +66,5 @@ APP_PORTS: dict[str, int] = {
     "bird_invocable_api_creator": 28815,
     "brief_budget":               28816,
     "trip_designer":              28817,
+    "code_engine_deployer":       28818,
 }

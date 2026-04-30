@@ -103,6 +103,7 @@ PROCS: list[dict] = [
     dict(name="bird_invocable_api_creator", kind="app", port=APP_PORTS["bird_invocable_api_creator"], cwd=HERE / "bird_invocable_api_creator", cmd=_app_cmd()),
     dict(name="brief_budget",       kind="app", port=APP_PORTS["brief_budget"],       cwd=HERE / "brief_budget",       cmd=_app_cmd()),
     dict(name="trip_designer",      kind="app", port=APP_PORTS["trip_designer"],      cwd=HERE / "trip_designer",      cmd=_app_cmd()),
+    dict(name="code_engine_deployer", kind="app", port=APP_PORTS["code_engine_deployer"], cwd=HERE / "code_engine_deployer", cmd=_app_cmd()),
 ]
 
 PID_FILE = HERE / ".launch_pids"

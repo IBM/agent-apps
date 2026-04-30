@@ -330,7 +330,6 @@ CugaAgent (guided by skills/video_qa.md)
     appUrl: 'http://localhost:28766',
     mcpUsage: [],
     inlineTools: ['transcribe_audio', 'search_transcript', 'get_segment_at_time'],
-    hidden: true,
   },
 
   {
@@ -470,7 +469,6 @@ Research Log panel (in-UI, auto-refreshed every 30s)`,
     tagline: 'Drop a voice memo — Whisper transcribes, agent structures, SQLite stores',
     type: 'audio-video',
     surface: 'pipeline',
-    hidden: true,
     description:
       'A personal journal that accepts audio recordings (.m4a, .mp3, .wav) and text entries via a browser UI. OpenAI Whisper API transcribes audio automatically (local Whisper as fallback). The agent structures each entry and stores it in SQLite alongside a Markdown file. A background watcher monitors ./inbox for new files. A configurable email digest sends a summary of recent entries on schedule.',
     category: 'personal',
@@ -1312,7 +1310,6 @@ Answer with citation:
     id: 'ibm-whats-new',
     name: "IBM What's New Monitor",
     tagline: 'Track IBM Cloud release notes across services — scheduled digest, email alerts, ad-hoc chat',
-    hidden: true,
     description:
       "A browser UI that monitors IBM Cloud service release notes and What's New announcements. Add services to your watch list (Code Engine, watsonx.ai, Event Streams, etc.), set a daily or weekly schedule, and the agent searches ibm.com and cloud.ibm.com via Tavily for recent changes. Meaningful updates appear in the Digest Log and are emailed automatically. Chat panel for ad-hoc questions like 'what changed in Cloud Object Storage this month?'",
     category: 'enterprise',
@@ -1669,7 +1666,6 @@ dataset_emit  →  output/california_schools/california_schools_{tools.py,
 
   {
     id: 'brief-budget',
-    hidden: true,
     name: 'Brief Budget',
     tagline: 'Research brief on a hard tool-call budget — planner-driven, light prompt',
     type: 'other',
@@ -1735,7 +1731,6 @@ SSE: done { used=15, budget=15, plan_count=2 }`,
 
   {
     id: 'trip-designer',
-    hidden: true,
     name: 'Trip Designer',
     tagline: 'Travel itinerary planner with a light, goal-shaped prompt — CUGA decides the workflow',
     type: 'other',
@@ -1797,6 +1792,151 @@ SSE: done { tool_call_count, plan_count }`,
       { server: 'geo', tools: ['geocode', 'find_hikes', 'search_attractions', 'get_weather'] },
     ],
     inlineTools: ['propose_plan'],
+  },
+
+  {
+    id: 'code-engine-deployer',
+    name: 'Code Engine Deployer',
+    tagline: 'Triage a docker-compose stack and deploy it to IBM Cloud Code Engine, with the agent running every CLI call under your eye',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'Hand the agent a docker-compose.yml path. It parses every service and classifies it for Code Engine readiness — CE-ready (single port, no bind mounts, sane memory), needs-work (env-secret bind mount → translate to CE Secret; large RO data → bake into image or COS), or won\'t-fit (multi-port containers, writable bind mounts to host paths). Then you tell it which subset to deploy. It walks the one-time setup (ICR namespace, registry secret so CE can pull, env secret from your .env), then per service: docker_build (always linux/amd64) → docker_push → ibmcloud ce app create — each command shown to you BEFORE it runs, results streamed back. On failure it pulls `ibmcloud ce app events` + logs and proposes one specific fix instead of retrying blindly. All shell calls are validated against allowlist regexes; no shell=True, no string interpolation.',
+    category: 'enterprise',
+    status: 'working',
+    channels: [],
+    tools: ['classify_compose_services()', 'docker_build()', 'deploy_ce_app()'],
+    demoPath: 'apps/code_engine_deployer',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG'],
+      setup: [
+        'cd apps/code_engine_deployer',
+        '# Host requirements: ibmcloud CLI + code-engine + container-registry plugins; docker CLI + daemon',
+        '# Auth: ibmcloud login --sso && ibmcloud target -r <region> -g <rg>',
+      ],
+      command: 'python main.py --port 28818',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. /classify is a non-LLM endpoint that returns a parse + verdict for the supplied compose path so the table renders without burning an LLM call. /ask is the conversational path through CugaAgent. All tools are inline — this is a new ops domain (Code Engine + ICR) that doesn\'t fit any existing shared MCP server, and the spec\'s ≥2-consumers bar for a new MCP server isn\'t met. ce_ops.py wraps every CLI call in a strict validator: lowercase DNS-label regex for names, tag regex for image refs, region regex for ICR. subprocess.run with list args, never shell=True. Every tool returns a structured envelope including the executed command, returncode, stdout, stderr — so the agent can read the actual error from CE and propose targeted fixes.',
+    diagram: `python main.py --port 28818  →  http://127.0.0.1:28818
+
+User: "Classify /path/to/docker-compose.yml"
+      │
+      ▼  POST /classify  (non-LLM, pure parse)
+compose_parser.parse_compose(path) → services[]
+compose_parser.classify_all(...)   → verdicts[]
+      │
+      ▼  rendered as table on the left panel
+
+User: "Deploy the CE-ready services to project foo"
+      │
+      ▼  POST /ask  (CugaAgent thread)
+agent.tools = [
+  parse_compose_file, classify_compose_services,
+  check_prereqs, list_ce_projects, target_ce_project,
+  list_ce_apps, get_ce_app, get_ce_app_logs, get_ce_app_events,
+  create_ce_secret_from_env_file, create_ce_registry_secret,
+  cr_login, cr_region_set, cr_namespace_add,
+  docker_build, docker_push,
+  deploy_ce_app, update_ce_app, delete_ce_app
+]
+each tool → ce_ops.<fn> → subprocess.run(list_args)
+                       → {ok, command, returncode, stdout, stderr}
+
+On failure:
+  agent reads stderr → calls get_ce_app_events / get_ce_app_logs
+                    → matches known patterns (ImagePullBackOff, OOM, port mismatch)
+                    → proposes ONE fix → asks user to confirm`,
+    cugaContribution: [
+      'Conversational triage — classify-and-explain phase reads any compose file (not just cuga-apps shaped) and tells the user WHY a service won\'t fit before they try, instead of failing mid-deploy.',
+      'Diagnosis loop — on `ibmcloud ce app create` failure, the agent fetches events + logs, matches the error pattern, and proposes a specific fix; no blind retries.',
+      'Hard validation under the LLM — every command is built from validated args (regex allowlist + structured kwargs), so the LLM cannot shell-inject through a malformed service name or tag.',
+      'Confirmation gates by default — destructive tools (delete_ce_app) require force=True and the system prompt instructs the agent to confirm the exact name with the user first.',
+    ],
+    examples: [
+      'Classify the compose file at /home/me/work/agent-apps/cuga-apps/docker-compose.yml',
+      'Deploy just the 8 MCP servers to my cuga-apps Code Engine project',
+      'My mcp-web deploy is stuck in ImagePullBackOff — what is wrong?',
+      'Walk me through first-time setup: ICR namespace, registry secret, env secret',
+      'Update mcp-knowledge to image us.icr.io/cuga-apps/mcp:v2 and roll',
+    ],
+    appUrl: 'http://localhost:28818',
+    mcpUsage: [],
+    inlineTools: [
+      'parse_compose_file', 'classify_compose_services',
+      'check_prereqs', 'list_ce_projects', 'target_ce_project',
+      'list_ce_apps', 'get_ce_app', 'get_ce_app_logs', 'get_ce_app_events', 'delete_ce_app',
+      'create_ce_secret_from_env_file', 'create_ce_registry_secret',
+      'cr_login', 'cr_region_set', 'cr_namespace_add',
+      'docker_build', 'docker_push',
+      'deploy_ce_app', 'update_ce_app',
+    ],
+  },
+
+  {
+    id: 'chief-of-staff',
+    name: 'Chief of Staff',
+    tagline: 'One chat over every MCP server — and a Toolsmith that acquires new tools when it hits a gap',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A single chat UI that aggregates every MCP server in mcp_servers/* through one cuga planner. When the agent hits a gap, a separate Toolsmith service (LangGraph ReAct) goes shopping: searches a curated OpenAPI catalog + APIs.guru, generates tool code with a swappable Coder (gpt-oss or Claude), probes it, and live-mounts it back into the cuga adapter. Auth-aware (api-key, bearer, oauth2 with auto-refresh on 401), vault-backed secrets, persistent ToolArtifacts that survive restarts, optional browser-driven tools for sites without APIs (Playwright + a YAML browser-task DSL).',
+    category: 'enterprise',
+    status: 'partial',
+    channels: [],
+    tools: ['cuga adapter', 'Toolsmith', 'browser-runner'],
+    demoPath: 'chief_of_staff',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'AGENT_SETTING_CONFIG', 'TOOLSMITH_CODER'],
+      setup: [
+        'cd chief_of_staff',
+        '# MCP servers must be running first: python apps/launch.py',
+      ],
+      command: './start.sh   # or: docker compose up',
+    },
+    architecture:
+      'Five services: (1) cuga-adapter (port 8000) wraps cuga.sdk.CugaAgent and exec()s artifact code under an import allowlist; (2) Toolsmith (port 8001) is a LangGraph ReAct agent with its own tool belt — search_catalog, search_openapi_index, generate_tool_code, probe_generated_tool, register_tool_artifact; (3) browser-runner (port 8002) is a Playwright + Chromium service that executes a declarative YAML DSL (go_to / click_text / fill_field / extract_text / user_confirm) for sites without APIs; (4) backend (port 8765) is the FastAPI shell + MCP discovery + registry; (5) frontend (port 5174) is the chat surface plus a tools panel. ToolArtifacts persist on disk at data/tools/<id>/ and are reloaded on restart. Secrets live in a vault (OS keyring → SQLite + base64-XOR fallback) and are injected at call time, never logged.',
+    diagram: `./start.sh   →   http://127.0.0.1:5174  (frontend)
+                                │
+                                ▼
+                  backend  :8765   (FastAPI shell, registry, MCP discovery)
+                  ├─►  cuga-adapter  :8000   (planner; exec()s tool code)
+                  ├─►  Toolsmith      :8001   (LangGraph ReAct, the brain)
+                  └─►  browser-runner :8002   (Playwright; YAML DSL)
+
+User: "do X"
+   │
+   ▼
+cuga planner → tool call            ──── existing MCP tool? ──► run it
+                  │
+                  └── [[TOOL_GAP]]  ──► Toolsmith.acquire(intent)
+                                          ├─ search_catalog (curated)
+                                          ├─ search_openapi_index / APIs.guru
+                                          ├─ Coder.generate_tool_code (gpt-oss or Claude)
+                                          ├─ probe (structural → exec → revise×3)
+                                          └─ register ToolArtifact + reload cuga
+                                                       │
+                                                       ▼
+                                            new tool live-mounted
+                                                       │
+                                                       ▼
+                                            retry user's request`,
+    cugaContribution: [
+      'Cuga planner is the swappable front end; Toolsmith is the durable brain. The planner can be replaced without losing acquired tools.',
+      'Adapter exec()s LLM-generated tool code under an import allowlist — disallowed imports register as error stubs that raise on call instead of crashing the adapter.',
+      'Auth-aware Coder + auto-refresh on 401 — the OAuth2 access token is swapped, retried once, and the refreshed token persisted back to the vault.',
+      'ToolArtifacts are the canonical disk format (manifest.yaml + tool.py + probe.json); LangChain / MCP / OpenAPI bindings are computed from one source of truth.',
+    ],
+    examples: [
+      "What's the weather in Berlin?  (api_key_query — openweather, seeded)",
+      'Show me trending Hacker News stories  (browser source — HN scrape template)',
+      'Send an email to alice@x.com with subject Y  (oauth2 — Gmail Send, paste tokens)',
+      'List my Google Calendar events for next week  (oauth2 — Calendar list-events)',
+      'What is the GitHub repo about for anthropics/claude-code?  (browser source — GitHub About scrape)',
+    ],
+    appUrl: 'http://localhost:5174',
+    mcpUsage: [],
+    inlineTools: [],
   },
 ]
 

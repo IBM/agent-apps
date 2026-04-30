@@ -53,12 +53,33 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 _IN_DOCKER = Path("/.dockerenv").exists() or os.getenv("CUGA_IN_DOCKER") == "1"
+_ON_CE = bool(
+    os.getenv("CE_APP")
+    or os.getenv("CE_REVISION")
+    or (os.getenv("CUGA_TARGET", "") or "").lower() == "ce"
+)
+
+# Default CE project hardcodes — overridden by CE-injected CE_SUBDOMAIN /
+# CE_REGION when running on Code Engine.
+_CE_PROJECT_HASH_DEFAULT = "1gxwxi8kos9y"
+_CE_REGION_DEFAULT       = "us-east"
 
 
 def _server_url(name: str) -> str:
+    # 1. Per-server explicit override always wins.
     env_override = os.getenv(f"MCP_{name.upper()}_URL")
     if env_override:
         return env_override
+    # 2. On Code Engine, derive from the deployed app naming convention.
+    if _ON_CE:
+        project_hash = (
+            os.getenv("CE_SUBDOMAIN")
+            or os.getenv("CE_PROJECT_HASH")
+            or _CE_PROJECT_HASH_DEFAULT
+        )
+        region = os.getenv("CE_REGION") or _CE_REGION_DEFAULT
+        return f"https://cuga-apps-mcp-{name}.{project_hash}.{region}.codeengine.appdomain.cloud/mcp"
+    # 3. In docker compose, use the service DNS.
     host = f"mcp-{name}" if _IN_DOCKER else "localhost"
     return f"http://{host}:{MCP_PORTS[name]}/mcp"
 

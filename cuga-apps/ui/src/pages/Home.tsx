@@ -8,10 +8,12 @@ import {
   type UseCaseType,
   type Category,
 } from '../data/usecases'
+import { resolveAppUrl } from '../data/deployment'
 
 // Apps default to ship-ready (✦ badge, sorted to top). Listing an id below
 // flips it to "for-later" — useful for demos that aren't polished enough
-// for an unattended end-to-end run yet.
+// for an unattended end-to-end run yet — or "exploratory" — work-in-progress
+// experiments that aren't on the demo track yet.
 const FOR_LATER_IDS = new Set([
   'bird-invocable-api',
   'api-doc-gen',
@@ -22,14 +24,42 @@ const FOR_LATER_IDS = new Set([
   'drop-summarizer',
 ])
 
-const isShipReady = (id: string) => !FOR_LATER_IDS.has(id)
+const EXPLORATORY_IDS = new Set([
+  'chief-of-staff',
+  'code-engine-deployer',
+  'video-qa',
+  'voice-journal',
+  'ibm-whats-new',
+  'brief-budget',
+  'trip-designer',
+])
 
-type ShipFilter = 'all' | 'ship-ready' | 'for-later'
+type Stage = 'ship-ready' | 'for-later' | 'exploratory'
+
+const stageOf = (id: string): Stage =>
+  EXPLORATORY_IDS.has(id) ? 'exploratory'
+  : FOR_LATER_IDS.has(id) ? 'for-later'
+  : 'ship-ready'
+
+const STAGE_BADGE: Record<Stage, { glyph: string; cls: string } | null> = {
+  'ship-ready':  { glyph: '✦', cls: 'text-amber-500' },
+  'exploratory': { glyph: '⚗', cls: 'text-purple-500' },
+  'for-later':   null,
+}
+
+function StageGlyph({ id, ml }: { id: string; ml: string }) {
+  const badge = STAGE_BADGE[stageOf(id)]
+  if (!badge) return null
+  return <span className={`${badge.cls} ${ml} font-bold`}>{badge.glyph}</span>
+}
+
+type ShipFilter = 'all' | Stage
 
 const SHIP_FILTER_LABEL: Record<ShipFilter, string> = {
   'all':         'All',
   'ship-ready':  '✦ Ship-ready',
   'for-later':   'For later',
+  'exploratory': '⚗ Exploratory',
 }
 
 function ShipFilterChips({
@@ -39,7 +69,7 @@ function ShipFilterChips({
   value: ShipFilter
   onChange: (v: ShipFilter) => void
 }) {
-  const options: ShipFilter[] = ['all', 'ship-ready', 'for-later']
+  const options: ShipFilter[] = ['all', 'ship-ready', 'for-later', 'exploratory']
   return (
     <div className="flex items-center gap-2.5 flex-wrap">
       <span className="text-sm text-t4 font-semibold uppercase tracking-wider w-20 shrink-0">Stage</span>
@@ -50,6 +80,8 @@ function ShipFilterChips({
             ? 'bg-amber-500 text-white border-amber-500'
             : opt === 'for-later'
             ? 'bg-slate-500 text-white border-slate-500'
+            : opt === 'exploratory'
+            ? 'bg-purple-600 text-white border-purple-600'
             : 'bg-indigo-600 text-white border-indigo-600'
         return (
           <button
@@ -67,10 +99,8 @@ function ShipFilterChips({
   )
 }
 
-const resolveUrl = (url: string | null): string | null => {
-  if (!url) return null
-  return url.replace('localhost', window.location.hostname)
-}
+// URL resolution moved to ../data/deployment.ts (resolveAppUrl) — handles
+// localhost rewrite for local dev AND CE rewrite for Hugging Face deploys.
 
 const TYPE_CONFIG: Record<UseCaseType, { label: string; icon: string; activeCls: string }> = {
   'event-driven':          { label: 'Event-driven',          icon: '⚡', activeCls: 'bg-amber-500 text-white border-amber-500' },
@@ -302,9 +332,7 @@ function DomainBuckets({
                         title={uc.tagline}
                       >
                         {uc.name}
-                        {isShipReady(uc.id) && (
-                          <span className="text-amber-500 ml-1 font-bold">✦</span>
-                        )}
+                        <StageGlyph id={uc.id} ml="ml-1" />
                       </button>
                     ))}
                   </div>
@@ -349,18 +377,13 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
       const matchesStatus = filterStatus === 'all' || uc.status === filterStatus
       const matchesType = filterType === 'all' || uc.type === filterType
       const matchesCategory = filterCategory === 'all' || uc.category === filterCategory
-      const ship = isShipReady(uc.id)
-      const matchesShip =
-        filterShip === 'all' ||
-        (filterShip === 'ship-ready' && ship) ||
-        (filterShip === 'for-later' && !ship)
+      const matchesShip = filterShip === 'all' || stageOf(uc.id) === filterShip
       return matchesSearch && matchesStatus && matchesType && matchesCategory && matchesShip
     })
-    // Stable sort: ship-ready first, original order otherwise.
+    // Stable sort: ship-ready first, then for-later, then exploratory.
     .sort((a, b) => {
-      const sa = isShipReady(a.id) ? 0 : 1
-      const sb = isShipReady(b.id) ? 0 : 1
-      return sa - sb
+      const order: Record<Stage, number> = { 'ship-ready': 0, 'for-later': 1, 'exploratory': 2 }
+      return order[stageOf(a.id)] - order[stageOf(b.id)]
     })
 
   if (filtered.length === 0) {
@@ -393,6 +416,9 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
             const appEnvs = uc.howToRun.envVars.filter(v => !UNIVERSAL_VARS.includes(v))
             const visibleEnvs = appEnvs.slice(0, 3)
             const extraEnvs = appEnvs.length - visibleEnvs.length
+            // null on Hugging Face when the app isn't deployed to CE; null
+            // on local when uc.appUrl itself is null.
+            const launchUrl = uc.comingSoon ? null : resolveAppUrl(uc)
             return (
               <tr
                 key={uc.id}
@@ -402,7 +428,7 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                 <td className="px-6 py-5 text-t4 text-sm font-mono">{i + 1}</td>
                 <td className="px-4 py-5">
                   <div className="font-semibold text-t1 text-lg group-hover:text-indigo-500 transition-colors leading-snug">
-                    {uc.name}{isShipReady(uc.id) && <span className="text-amber-500 ml-1.5 font-bold">✦</span>}
+                    {uc.name}<StageGlyph id={uc.id} ml="ml-1.5" />
                   </div>
                   <div className="text-sm text-t3 mt-1 leading-relaxed">{uc.tagline}</div>
                 </td>
@@ -493,9 +519,9 @@ function UseCaseTable({ useCases, search, filterStatus, filterType, filterCatego
                     <span className="inline-block px-3 py-1.5 text-sm font-medium bg-tsurf2 text-t4 border border-tborder rounded-lg whitespace-nowrap">
                       Coming soon
                     </span>
-                  ) : uc.appUrl ? (
+                  ) : launchUrl ? (
                     <a
-                      href={resolveUrl(uc.appUrl)!}
+                      href={launchUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-block px-3.5 py-1.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors whitespace-nowrap shadow-sm"
@@ -523,7 +549,7 @@ export default function Home() {
   const [filterType, setFilterType] = useState<UseCaseType | 'all'>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
   const [filterBucket, setFilterBucket] = useState<string | null>(null)
-  const [filterShip, setFilterShip] = useState<ShipFilter>('all')
+  const [filterShip, setFilterShip] = useState<ShipFilter>('ship-ready')
 
   const visible = USE_CASES.filter((u) => !u.hidden)
 
@@ -615,9 +641,9 @@ export default function Home() {
             <option value="not-working">Not working</option>
             <option value="gap">Gap</option>
           </select>
-          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all' || filterBucket || filterShip !== 'all') && (
+          {(search || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all' || filterBucket || filterShip !== 'ship-ready') && (
             <button
-              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setFilterBucket(null); setFilterShip('all') }}
+              onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setFilterBucket(null); setFilterShip('ship-ready') }}
               className="px-4 py-2 text-sm font-medium text-t3 hover:text-t1 bg-tsurf2 border border-tborder rounded-xl transition-colors"
             >
               Clear all
@@ -634,7 +660,8 @@ export default function Home() {
 
       <p className="mt-5 text-sm text-t4">
         Click any row to see architecture, run instructions, and how CUGA powers it.{' '}
-        <span className="text-amber-500">✦</span> ship-ready · everything else is for-later
+        <span className="text-amber-500">✦</span> ship-ready ·{' '}
+        <span className="text-purple-500">⚗</span> exploratory · everything else is for-later
       </p>
     </div>
   )

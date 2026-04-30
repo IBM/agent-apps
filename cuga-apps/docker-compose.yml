@@ -183,6 +183,7 @@ services:
       - "28815:28815"   # bird_invocable_api_creator
       - "28816:28816"   # brief_budget
       - "28817:28817"   # trip_designer
+      # 28818 — code_engine_deployer is local-only (needs host docker + ibmcloud + user's IBM auth)
     # First mount: secrets are read at runtime (sourced by entrypoint.sh)
     # instead of being injected via env_file: — keeps them out of `docker
     # inspect` and out of the image. See entrypoint.sh.
@@ -215,7 +216,9 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
-    ports: ["3001:80"]
+    # nginx listens on 7860 (non-privileged) so the same image runs on
+    # Hugging Face Spaces; host port 3001 is unchanged for local dev.
+    ports: ["3001:7860"]
     restart: unless-stopped
 
   # ── MCP Tool Explorer (browse + invoke every MCP server's tools) ────

@@ -252,11 +252,22 @@ def create_llm(
         project_id = os.getenv("WATSONX_PROJECT_ID") or os.getenv("WATSONX_SPACE_ID")
         if not project_id:
             raise ValueError("Set WATSONX_PROJECT_ID or WATSONX_SPACE_ID.")
+        # NOTE: pass max_tokens / temperature as top-level kwargs, NOT inside
+        # `params={"max_new_tokens": ...}`. Recent langchain_ibm uses the
+        # OpenAI-style chat completions wire format which expects `max_tokens`,
+        # and silently ignores the legacy `params={"max_new_tokens": ...}`
+        # field — watsonx then defaults to ~1024 output tokens. With reasoning
+        # models like gpt-oss-120b, the (private) reasoning_content alone can
+        # consume the entire 1024-token budget and the wire response truncates
+        # before any visible `content` is produced. Result: every search /
+        # synthesis app returns "No answer found" because state.final_answer
+        # ends up as an empty string. Don't reintroduce the params= form.
         return ChatWatsonx(
             model_id=m or "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
             url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
             project_id=project_id,
-            params={"temperature": 0, "max_new_tokens": 4096},
+            temperature=0,
+            max_tokens=16000,
         )
 
     elif p == "anthropic":

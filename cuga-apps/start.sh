@@ -92,5 +92,8 @@ python brief_budget/main.py --port 28816 &
 log "Starting trip_designer       on :28817"
 python trip_designer/main.py --port 28817 &
 
+# code_engine_deployer is local-only — needs host docker + ibmcloud CLI +
+# user's IBM auth. Run it from your workstation: `python code_engine_deployer/main.py --port 28818`.
+
 log "All 26 apps launched. Waiting..."
 wait

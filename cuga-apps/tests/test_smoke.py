@@ -39,9 +39,17 @@ def test_tool_explorer_lists_all_seven_servers(http):
     assert not offline, f"servers offline: {offline}"
 
 
+# Apps that are intentionally NOT started by docker compose (local-only).
+# The smoke suite assumes the docker compose stack is up; these are skipped.
+_LOCAL_ONLY_APPS = {"code_engine_deployer"}
+
+
 # ── apps reachable ──────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("app", sorted(APP_PORTS.keys()))
+@pytest.mark.parametrize(
+    "app",
+    sorted(set(APP_PORTS.keys()) - _LOCAL_ONLY_APPS),
+)
 def test_app_serves_root(app):
     """Every app FastAPI serves a 2xx/3xx on `/`."""
     code = http_ok(app_url(app) + "/")

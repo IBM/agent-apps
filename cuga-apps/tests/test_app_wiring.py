@@ -91,6 +91,9 @@ ENDPOINTS = [
     # youtube_research — research log + settings
     ("youtube_research", "/reports",  "json_list"),
     ("youtube_research", "/settings", "json_obj"),
+
+    # code_engine_deployer is local-only (needs host docker + ibmcloud + user's IBM auth)
+    # — not started by docker compose, so no in-container wiring test.
 ]
 
 
