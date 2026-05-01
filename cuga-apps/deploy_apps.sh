@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =====================================================================
-# deploy_apps.sh — deploy 19 cuga-apps FastAPI apps to IBM Cloud Code Engine.
+# deploy_apps.sh — deploy 21 cuga-apps FastAPI apps to IBM Cloud Code Engine.
 #
-# All 19 apps run from one shared image (built by build_apps_image.sh).
+# All 21 apps run from one shared image (built by build_apps_image.sh).
 # Each CE app picks which main.py to run via --command + --argument.
 #
 # MCP URL resolution is automatic: the apps' _mcp_bridge.py detects CE_APP
@@ -20,9 +20,10 @@
 #   - CE secrets `app-env` and `icr-secret-1` exist
 #
 # Usage:
-#   ./deploy_apps.sh                     # all 19
+#   ./deploy_apps.sh                     # all 21
 #   ./deploy_apps.sh web_researcher      # one
 #   ./deploy_apps.sh paper_scout code_reviewer api_doc_gen   # subset
+#   ./deploy_apps.sh recipe_composer city_beat               # the two new apps
 #
 # Override defaults via env:
 #   REGION    (default: us-south)
@@ -72,6 +73,8 @@ TIER1=(
   "ibm_whats_new      28814 arg"
   "api_doc_gen        28811 arg"
   "stock_alert        28801 arg"
+  "recipe_composer    28820 arg"
+  "city_beat          28821 arg"
 )
 TIER2=(
   "newsletter         28793 arg"

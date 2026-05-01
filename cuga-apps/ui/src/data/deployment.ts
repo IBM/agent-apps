@@ -37,7 +37,7 @@ export const CE_PROJECT_HASH = '1gxwxi8kos9y'
 export const CE_REGION       = 'us-east'
 
 
-// ── Apps actually deployed to CE (tier 1 + tier 2 = 19) ────────────────
+// ── Apps actually deployed to CE (tier 1 + tier 2 = 21) ────────────────
 // Maps the use-case `id` from usecases.ts to the CE app name. Most are
 // `cuga-apps-<id>` directly; the one exception is `travel-agent` whose
 // underlying directory is `travel_planner`.
@@ -60,6 +60,8 @@ const CE_APP_BY_ID: Record<string, string> = {
   'ibm-whats-new':      'cuga-apps-ibm-whats-new',
   'api-doc-gen':        'cuga-apps-api-doc-gen',
   'stock-alert':        'cuga-apps-stock-alert',
+  'recipe-composer':    'cuga-apps-recipe-composer',
+  'city-beat':          'cuga-apps-city-beat',
 
   // Tier 2 — in-memory state
   'newsletter':         'cuga-apps-newsletter',

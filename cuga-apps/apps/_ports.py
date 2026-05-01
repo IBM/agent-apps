@@ -67,4 +67,6 @@ APP_PORTS: dict[str, int] = {
     "brief_budget":               28816,
     "trip_designer":              28817,
     "code_engine_deployer":       28818,
+    "recipe_composer":            28820,
+    "city_beat":                  28821,
 }

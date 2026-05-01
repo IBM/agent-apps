@@ -11,3 +11,4 @@ apps/.env
 apps/.env
 cuga-apps/apps/__pycache__/_llm.cpython-311.pyc
 cuga-apps/apps/__pycache__/_ports.cpython-311.pyc
+*.venv/

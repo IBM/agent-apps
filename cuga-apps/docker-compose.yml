@@ -184,6 +184,8 @@ services:
       - "28816:28816"   # brief_budget
       - "28817:28817"   # trip_designer
       # 28818 — code_engine_deployer is local-only (needs host docker + ibmcloud + user's IBM auth)
+      - "28820:28820"   # recipe_composer
+      - "28821:28821"   # city_beat
     # First mount: secrets are read at runtime (sourced by entrypoint.sh)
     # instead of being injected via env_file: — keeps them out of `docker
     # inspect` and out of the image. See entrypoint.sh.

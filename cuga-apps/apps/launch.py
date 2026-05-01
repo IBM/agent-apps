@@ -104,6 +104,8 @@ PROCS: list[dict] = [
     dict(name="brief_budget",       kind="app", port=APP_PORTS["brief_budget"],       cwd=HERE / "brief_budget",       cmd=_app_cmd()),
     dict(name="trip_designer",      kind="app", port=APP_PORTS["trip_designer"],      cwd=HERE / "trip_designer",      cmd=_app_cmd()),
     dict(name="code_engine_deployer", kind="app", port=APP_PORTS["code_engine_deployer"], cwd=HERE / "code_engine_deployer", cmd=_app_cmd()),
+    dict(name="recipe_composer",    kind="app", port=APP_PORTS["recipe_composer"],    cwd=HERE / "recipe_composer",    cmd=_app_cmd()),
+    dict(name="city_beat",          kind="app", port=APP_PORTS["city_beat"],          cwd=HERE / "city_beat",          cmd=_app_cmd()),
 ]
 
 PID_FILE = HERE / ".launch_pids"

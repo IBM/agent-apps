@@ -1938,6 +1938,156 @@ cuga planner → tool call            ──── existing MCP tool? ──► 
     mcpUsage: [],
     inlineTools: [],
   },
+  {
+    id: 'recipe-composer',
+    name: 'Recipe Composer',
+    tagline: 'Tell the agent what\'s in your pantry — get 3–5 cookable recipes for tonight',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'A pantry-first home-cooking assistant with a browser UI. Tell the agent what ingredients you have, your dietary preferences (vegetarian, vegan, pescatarian, gluten-free, dairy-free, keto), and any allergies — it tracks all of it per session. When you ask for ideas, it brainstorms 3–5 dishes that use what you have, validates each against your diet/allergies, looks up rough macros from a built-in lookup table, and proposes substitutions for items you\'re missing. Recipes appear as cards in the right panel with cook time, difficulty, calorie estimate, and collapsible step-by-step instructions. All tools are inline — no MCP servers, no API keys beyond the LLM provider.',
+    category: 'personal',
+    status: 'working',
+    channels: [],
+    tools: [
+      'add_to_pantry()', 'remove_from_pantry()', 'list_pantry()',
+      'set_diet()', 'add_allergy()',
+      'estimate_macros()', 'suggest_substitution()', 'check_diet_compatibility()',
+      'save_recipes()',
+    ],
+    demoPath: 'apps/recipe_composer',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY'],
+      setup: [
+        'cd apps/recipe_composer',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 28820',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent calls add_to_pantry / set_diet / add_allergy eagerly as the user mentions ingredients and preferences. On a recipe request: list_pantry → brainstorm dishes → check_diet_compatibility per candidate → optional estimate_macros → save_recipes (structured cards). GET /session/{thread_id} returns live pantry + diet + allergies + recipes for the right-panel poll. All tools are inline @tool defs over a per-thread session dict; no MCP, no external APIs.',
+    diagram: `python main.py  →  http://127.0.0.1:28820
+
+User: "I have chicken breast, rice, broccoli, and soy sauce"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ add_to_pantry(thread_id=…, ingredient="chicken breast")
+      ├─ add_to_pantry(thread_id=…, ingredient="rice")
+      ├─ add_to_pantry(thread_id=…, ingredient="broccoli")
+      ├─ add_to_pantry(thread_id=…, ingredient="soy sauce")
+      │
+User: "I'm vegetarian and what can I cook tonight?"
+      ├─ set_diet(thread_id=…, diet="vegetarian")
+      ├─ list_pantry(thread_id=…)            → pantry, diet, allergies
+      ├─ check_diet_compatibility(thread_id=…, ingredients_csv="chicken breast,…")
+      │      → blocked_by_diet=["chicken breast"]
+      ├─ suggest_substitution(ingredient="chicken breast")
+      │      → tofu, chickpeas
+      ├─ estimate_macros(ingredient="rice", grams=200)
+      ├─ save_recipes([{title, time_minutes, difficulty, uses, missing,
+      │                 calories_est, why, steps}, …])
+      ▼
+Right panel: pantry + diet pills + 3–5 recipe cards w/ collapsible steps`,
+    cugaContribution: [
+      'Eagerly mutates per-session pantry state as the user mentions ingredients — no "add to pantry" button needed in the UI',
+      'check_diet_compatibility short-circuits dishes that violate diet/allergies before they reach the user — fewer apologetic retries',
+      'estimate_macros uses a static lookup table baked into the tool body — no nutrition API key, no external network call',
+      'save_recipes pushes structured JSON to the UI; the right panel renders cards (with collapsible cook steps) automatically',
+    ],
+    examples: [
+      "I have chicken breast, rice, broccoli, and soy sauce",
+      "Add eggs, spinach, and tomato to my pantry",
+      "I'm vegetarian and allergic to peanut butter",
+      "What can I cook tonight in under 25 minutes?",
+      "Roughly how many calories in a 200 g portion of pasta?",
+      "What can I substitute for butter in a sauté?",
+      "Anything with high protein?",
+    ],
+    appUrl: 'http://localhost:28820',
+    mcpUsage: [],
+    inlineTools: [
+      'add_to_pantry', 'remove_from_pantry', 'list_pantry',
+      'set_diet', 'add_allergy',
+      'estimate_macros', 'suggest_substitution', 'check_diet_compatibility',
+      'save_recipes',
+    ],
+  },
+  {
+    id: 'city-beat',
+    name: 'City Beat',
+    tagline: 'Name a city — get a one-screen briefing of weather, news, background, and (optional) crypto',
+    type: 'other',
+    surface: 'gateway',
+    description:
+      'Type a city name. The agent assembles a one-screen briefing pulling from four MCP servers: geocode + current weather (mcp-geo), today\'s news (mcp-web), encyclopedia background (mcp-knowledge), and an optional crypto market spotlight (mcp-finance). Inline session tools track the active city, an editable focus-topic list (biases the news search), a clickable watchlist of cities you\'ve visited, and an optional crypto ticker. The briefing appears as a hero card on the right (city + tagline + lat/lon), followed by weather, news headlines (linked), Wikipedia background, optional nearby attractions, optional crypto sidebar.',
+    category: 'personal',
+    status: 'working',
+    channels: [],
+    tools: [
+      'geocode()', 'get_weather()', 'search_attractions()',
+      'web_search()', 'get_wikipedia_article()', 'get_crypto_price()',
+      'set_current_city()', 'add_focus_topic()', 'save_briefing()',
+    ],
+    demoPath: 'apps/city_beat',
+    howToRun: {
+      envVars: ['LLM_PROVIDER', 'LLM_MODEL', 'ANTHROPIC_API_KEY'],
+      setup: [
+        'cd apps/city_beat',
+        'pip install -r requirements.txt',
+      ],
+      command: 'python main.py --port 28821',
+    },
+    architecture:
+      'FastAPI serves the single-page UI. POST /ask → CugaAgent (1) calls set_current_city + get_session_state, (2) geocodes via mcp-geo.geocode, (3) fans out to mcp-geo.get_weather + mcp-web.web_search + mcp-knowledge.get_wikipedia_article in any order, (4) optionally calls mcp-geo.search_attractions and mcp-finance.get_crypto_price, (5) calls inline save_briefing with a structured JSON object. GET /session/{thread_id} returns the live state for the right-panel poll. _mcp_bridge.load_tools resolves URLs automatically: Code Engine when CE_APP is set, docker-compose DNS in containers, localhost otherwise.',
+    diagram: `python main.py  →  http://127.0.0.1:28821
+
+User: "Brief me on Lisbon — focus on tech startups"
+      │  POST /ask
+      ▼
+CugaAgent
+      ├─ set_current_city(thread_id=…, city="Lisbon")
+      ├─ add_focus_topic(thread_id=…, topic="tech startups")
+      ├─ get_session_state(thread_id=…)
+      ├─ geocode(place="Lisbon")              [mcp-geo]
+      │      → lat, lon, display_name
+      ├─ get_weather(city="Lisbon")           [mcp-geo]
+      ├─ web_search(query="Lisbon news today tech startups", max_results=5) [mcp-web]
+      ├─ get_wikipedia_article(title="Lisbon") [mcp-knowledge]
+      ├─ (optional) search_attractions(lat, lon, category="cultural") [mcp-geo]
+      ├─ (optional) get_crypto_price(symbol="eth") [mcp-finance]
+      ├─ save_briefing({city, lat, lon, weather, wiki, news, attractions?, crypto?, tagline})
+      ▼
+Right panel: hero card + weather + news (linked) + Wikipedia + (optional)
+            attractions + (optional) crypto + clickable watchlist`,
+    cugaContribution: [
+      'Composes tools from four MCP servers (geo, web, knowledge, finance) with six inline session-state tools — neither half stands alone',
+      '_mcp_bridge auto-resolves URLs across local / docker / Code Engine — same app code, three deployment targets',
+      'Inline focus_topics bias the web_search query string at composition time — no need to retrain or fork mcp-web',
+      'save_briefing\'s docstring is the contract: structured JSON the right panel renders without UI-side schema knowledge',
+      'Watchlist accumulates cities the user asks about — the UI re-asks on click, turning the right panel into a navigable history',
+    ],
+    examples: [
+      "Brief me on Lisbon",
+      "What's happening in Tokyo today?",
+      "Brief me on Mexico City — focus on live music",
+      "Spotlight ETH on the briefing",
+      "What can I do in Berlin tonight?",
+      "Brief me on Bangalore — focus on weather and transit",
+      "Clear the focus and give me a fresh take on Paris",
+    ],
+    appUrl: 'http://localhost:28821',
+    mcpUsage: [
+      { server: 'geo',       tools: ['geocode', 'get_weather', 'search_attractions'] },
+      { server: 'web',       tools: ['web_search'] },
+      { server: 'knowledge', tools: ['get_wikipedia_article', 'search_wikipedia'] },
+      { server: 'finance',   tools: ['get_crypto_price'] },
+    ],
+    inlineTools: [
+      'set_current_city', 'add_focus_topic', 'clear_focus_topics',
+      'set_crypto_spotlight', 'get_session_state', 'save_briefing',
+    ],
+  },
 ]
 
 export const CATEGORIES: Record<Category, { label: string; color: string }> = {
